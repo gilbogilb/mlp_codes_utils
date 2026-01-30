@@ -1,48 +1,31 @@
+#code and functions to benchmark the performance of machine learning potentials
+#with ASE + a series of codes. Some of this code (fcc bulk fit and surface energies)
+#is a modified version of a code given to me by D. Alimonti @ unimi (Thank you!)
+#a setup file example is in ./benchmark_setup.yaml
+#author: gilberto.nardi@unimi.it
+
 import yaml
 import numpy as np
 import sys
 
-from ase import Atoms, Atom
+from ase import Atoms
 from ase.units import kJ, fs
-from ase.lattice.cubic import FaceCenteredCubic as fcc,BodyCenteredCubic as bcc
-from ase.build import bulk,add_vacuum,fcc100,fcc111,fcc110, add_adsorbate#,surface as asesurf
+from ase.lattice.cubic import FaceCenteredCubic as fcc
+from ase.build import fcc100,fcc111,fcc110, add_adsorbate
 from ase.cluster import Icosahedron as ih, Octahedron as oh, Decahedron as dh
-from ase.calculators.lammpslib import LAMMPSlib #ideally, for all potentials, in fact, use direct calculators
 from ase.io import write, read
-from ase.eos import EquationOfState as eqos,  calculate_eos
+from ase.eos import EquationOfState as eos
 from ase.optimize import LBFGS
 import time
 from ase.md.langevin import Langevin
-try:
-    from lammps import lammps as lmp
-except:
-    lammps_ok = False
-    print("Warning: lammps-python not available.")
 
-#deal with different calculators - mace flare nequip
-#maybe do a run_all script
+#calculators are imported later on, depending on your chosen calc in the yaml setup file
+
 #add output folder
-#fix logging errors.txt
 #try su stresses
 #make a plotter with everything
 #divide eos fit eos test
-
-#flare calc
-try:
-    from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
-except:
-    flare_ok = False
-    print("Warning: FLARE_Calculator not available.")
-
-#mace calc
-try:
-    from mace.calculators import MACECalculator
-except:
-    mace_ok = False
-    print("Warning: MACECalculator not available.")
-
-
-import re
+#extend to more than one chemical specie
 
 try:
     from tqdm import tqdm
@@ -50,78 +33,81 @@ except:
     def tqdm(iterable, desc=""):
         return iterable
 
-#BENCHMARK 1: EQUATION OF STATE FOR BCC AND FCC
 
-def eos_fcc_benchmark(symbol, calc, alat, pmppercent=3.0):
+def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     """
-    Compute bulk energies and fit the equation of state. Initial lattice constant range is alat(1-pmpercent/100), alat(1+pmpercent/100); a more precise calculation follows.
+    Compute fcc bulk energy as a function of volume and fit the equation of state. 
+    A first tentative calculation around alat to find the calculator-predicted minimum
+    is followed by a second, more precise one around alat +- pmpercent*alat/100.0 to 
+    fit more precisely bulk modulus and cohesive energy.
+
+    Returns a dictionary with computed bulk properties (lattice constant, cohesive energy, bulk modulus)
+    and writes a file with the V-E(V) curve ('eos.dat')
     """
 
     bulk_properties = dict({})
-    bulk_factories  = dict({"fcc" : fcc})
-    bounds_dict     = dict({ "fcc" : [alat-pmppercent*alat/100., alat+pmppercent/100]}) # a tentative alats range. more precise calculation follows after a first rough estimate
-    typelats        = ["fcc"]
-
-    #mace learns and returns E_iso, flare has it =0
+    #different potentials have different conventions (return or not the ab-initio isolated atom energy)
     iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
     iso_atom.calc = calc
     iso_atom.center(vacuum=10.0) #needed for lammps
 
-    #iterate over lattice types - only fcc as of now
-    for typelat in typelats:
-        volumes, energies = [], []
-        bounds            = bounds_dict[typelat]
-        alats             = np.linspace(bounds[0] , bounds[1], 15)
+    volumes, energies = [], []
+    bounds = [alat-10*alat/100., alat+10*alat/100] # a tentative alats range. more precise calculation follows after a first rough estimate
+    alats  = np.linspace(bounds[0] , bounds[1], 15)
 
-        #compute energy over a range of latice constants around the putative minimum
-        for alat in alats:
-            sys      = bulk_factories[typelat](size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
-            sys.calc = calc
-            poten       = sys.get_potential_energy()
-            vol         = sys.get_volume()
-            energies.append(poten)
-            volumes.append(vol)
-            #print("calculated system with alat=",alat)
+    #compute energy over a range of latice constants around the putative minimum
+    for alat in alats:
+        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) #makes a conventional cell
+        sys.calc = calc
+        poten    = sys.get_potential_energy()
+        vol      = sys.get_volume()
+        energies.append(poten)
+        volumes.append(vol)
 
-        #fit equation of state
-        v0, e0, B = eqos(volumes,energies,eos='murnaghan').fit()
+    #fit equation of state
+    v0, e0, B = eos(volumes, energies, eos='murnaghan').fit()
 
-        #now, more precise:
-        volumes, energies = [], []
-        alat_precise = (v0/len(sys)*4. )**(1.0 / 3.0)
-        bounds            = [alat_precise - pmppercent*alat_precise/100., alat_precise+pmppercent*alat_precise/100.]
-        alats             = np.linspace(bounds[0] , bounds[1], 20)
 
-        for alat in alats:
-            sys      = bulk_factories[typelat](size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
-            sys.calc = calc
-            poten       = sys.get_potential_energy()
-            vol         = sys.get_volume()
-            energies.append(poten)
-            volumes.append(vol)
+    #recompute with better precision:
+    volumes, energies = [], []
+    alat_precise      = (v0/len(sys)*4. )**(1.0 / 3.0)
+    bounds            = [alat_precise - pmppercent*alat_precise/100., alat_precise+pmppercent*alat_precise/100.]
+    alats             = np.linspace(bounds[0] , bounds[1], 20)
 
-        #fit equation of state
-        v0, e0, B = eqos(volumes,energies,eos='murnaghan').fit()
+    for alat in alats:
+        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
+        sys.calc = calc
+        poten    = sys.get_potential_energy()
+        vol      = sys.get_volume()
+        energies.append(poten)
+        volumes.append(vol)
 
-        B  = (B/kJ * 1.0e24)      #bulk modulus - eV/A**3 to GPa conversion
-        a0 = (v0/len(sys)*4. )**(1 / 3.0)  #lattice constant from the volume (normalize per conventional cells)
-        e0 = e0/len(sys) - iso_atom.get_potential_energy()    #potential energy per atom
-        bulk_properties[typelat+"_bulk"]       = dict({})
-        bulk_properties[typelat+"_bulk"]['B']  = float(B)
-        bulk_properties[typelat+"_bulk"]['a0'] = float(a0)
-        bulk_properties[typelat+"_bulk"]['e0'] = float(e0)
+    #fit equation of state
+    v0, e0, B = eos(volumes,energies,eos='murnaghan').fit()
 
-        #write eos data
-        f = open('eos.dat','w')
-        for a, e in zip(alats, energies):
-            f.write(str(a)+" "+str(e/len(sys))+" \n")
-        f.close()
+    B  = (B/kJ * 1.0e24)      #bulk modulus - eV/A**3 to GPa conversion
+    a0 = (v0/len(sys)*4. )**(1 / 3.0)  #lattice constant from the volume (normalize per conventional cells)
+    e0 = e0/len(sys) - iso_atom.get_potential_energy()    #potential energy per atom
+    bulk_properties["fcc_bulk"]       = dict({})
+    bulk_properties["fcc_bulk"]['B']  = float(B)
+    bulk_properties["fcc_bulk"]['a0'] = float(a0)
+    bulk_properties["fcc_bulk"]['e0'] = float(e0)
+
+    #write eos data
+    f = open('eos.dat','w')
+    for a, e in zip(alats, energies):
+        f.write(str(a)+" "+str(e/len(sys))+" \n")
+    f.close()
 
     return bulk_properties
 
-def low_index_surfen(symbol, calc, ecohesive, lattice_constant):
+def low_index_surfen(symbol, calc, ecohesive, lattice_constant, size=(2,2,7), vacuum=6.5):
     """
-    Compute (fcc) surface energy from relaxation calculations.
+    Compute surface energy of relaxed fcc low index surfaces.
+    Slab size and vacuum on EACH SIDE of the slab can be modified 
+    to match your ab-initio computations.
+
+    Returns a dictionary with the computed properties.
     """
 
     surface_properties = dict({})
@@ -129,7 +115,7 @@ def low_index_surfen(symbol, calc, ecohesive, lattice_constant):
                      "fcc110":fcc110,
                      "fcc111":fcc111})
     
-    #mace learns and returns E_iso, flare has it =0
+    #different potentials have different conventions (return or not the ab-initio isolated atom energy)
     iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
     iso_atom.calc = calc
     iso_atom.center(vacuum=10.0)
@@ -137,96 +123,112 @@ def low_index_surfen(symbol, calc, ecohesive, lattice_constant):
     for surfact, surfname in zip(surfactories.values(), surfactories.keys()):
 
         #create structure
-        surf = surfact(symbol=symbol, size=(2,2,7), a = lattice_constant)
-        surf.center(vacuum=6.5,axis=2)
+        surf = surfact(symbol=symbol, size=size, a = lattice_constant)
+        surf.center(vacuum=vacuum, axis=2)
 
         #initialize calculator
         surf.calc = calc
 
         #relax the structure
-        dyn       = LBFGS(surf,logfile="bfgs.log")
+        dyn = LBFGS(surf,logfile="bfgs.log")
         dyn.run(fmax=1e-5)
 
         #compute surface energy
-        cell      = surf.get_cell()
-        surface   = np.linalg.norm(np.cross(cell[0],cell[1]))
-        poten     = surf.get_potential_energy() - iso_atom.get_potential_energy()*len(surf)
-        surfen    = (poten - ecohesive*len(surf))/2./surface*16.02
+        cell    = surf.get_cell()
+        surface = np.linalg.norm(np.cross(cell[0],cell[1]))
+        poten   = surf.get_potential_energy() - iso_atom.get_potential_energy()*len(surf)
+        surfen  = (poten - ecohesive*len(surf))/2./surface*16.02
         surface_properties[surfname]=dict({"gamma":float(surfen)})
 
     return surface_properties
 
-def eos_large(symbol, calc, alat, pmppercent=50.):
+def eos_fcc_large_test(symbol, calc, alat, pmppercent=50.):
     """
-    Only computes and returns volume vs energy. Can be used to look at performance over a wide ragne of lattice constants to look at what happens when youre far from the minimum
-    (e.g. to check for ghost holes in your potential)
+    Only computes and returns volume vs energy. Can be used to look at performance over a wide range
+    of lattice constants to look at what happens when you're far from the minimum
+    (e.g. to check for ghost holes in your potential).
     """
 
-    bulk_properties = dict({})
-    bulk_factories  = dict({"fcc" : fcc})
-    bounds_dict     = dict({ "fcc" : [alat-pmppercent*alat/100., alat+pmppercent/100]}) 
-    typelats        = ["fcc"]
+    volumes, energies = [], []
+    bounds = [alat-pmppercent*alat/100., alat+pmppercent/100]
+    alats             = np.linspace(bounds[0] , bounds[1], 40)
 
-    #iterate over lattice types - only fcc as of now
-    for typelat in typelats:
-        volumes, energies = [], []
-        bounds            = bounds_dict[typelat]
-        alats             = np.linspace(bounds[0] , bounds[1], 40)
-
-        #compute energy over a range of latice constants around the putative minimum
-        for alat in alats:
-            Cu_sys      = bulk_factories[typelat](size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
-            Cu_sys.calc = calc
-            poten       = Cu_sys.get_potential_energy()
-            vol         = Cu_sys.get_volume()
-            energies.append(poten)
-            volumes.append(vol)
+    for alat in alats:
+        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
+        sys.calc = calc
+        poten    = sys.get_potential_energy()
+        vol      = sys.get_volume()
+        energies.append(poten)
+        volumes.append(vol)
 
     return volumes, energies
 
 def adsorbate_curve(symbol, calc, npoints=40):
-    #compute the energy and forces on a particle close to a surface at different distances
+    """
+    Computes the energy and forces on a particle close to a 111 surface at different distances.
+    The idea is to check for poorly sampled areas (e.g. far from the surface) where a potential
+    might show unphysical behaviour (e.g. large ghost potential holes)
+    
+    :param symbol: chemical symbol
+    :param calc: ASE calculator
+    :param npoints: number of points to sample the range of atom-surface distances
+
+    returns atom-surface distances and corresponding system energies
+    """
+
     distances = np.linspace(0.8, 8.0, npoints)
     energies  = []
 
     for d in distances:
 
         #create system: surface with adsorbate
-        slab = fcc111(symbol, size = (4,4,7), vacuum = 10.0)
-        add_adsorbate(slab, symbol, d, 'ontop') #should be in fcc111
+        slab = fcc111(symbol, size = (4,4,7))
+        add_adsorbate(slab, symbol, d, 'ontop')
         slab.center(vacuum=10.0, axis=2)
 
         #calculators and stuff
-        slab.calc   = calc
+        slab.calc = calc
         energies.append( slab.get_potential_energy() )
     
     return distances, energies
 
 def dimer_curve(symbol, calc, npoints=40):
-    #compute the energy and forces in a dimer molecule at different distances
+    """
+    Computes the energy and forces in a dimer molecule at different distances.
+    The idea is to check for poorly sampled areas (e.g. large atoms separations) where a potential
+    might show unphysical behaviour (e.g. large ghost potential holes)
+    
+    :param symbol: chemical symbol
+    :param calc: ASE calculator
+    :param npoints: number of points to sample the range of atom-atom distances
+
+    returns atom-atom distances and corresponding system energies
+    """
+
     distances = np.linspace(1.0, 7.0, npoints)
     energies  = []
 
     for d in distances:
         dimer = Atoms(symbol+symbol, positions=[(0,0,0),(0,0,d)])
         dimer.center(vacuum=10.0)
-
-        #calculators and stuff
         dimer.calc   = calc
         energies.append( dimer.get_potential_energy() )
-        #print(f'I just did {d}')
 
     return distances, energies
 
-def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
+def mae_mav_test(calc, test_set_file, E_iso, use_norm=True, out_folder='./'):
 
     """
     Compute mae/mav on a test set. NB: energies are per atom.
 
-    test_set_file: a string with your xyzs test set configurations
-    E_iso: energy for the isolated atom (removed from dft results). To be implemented: more than one specie
+    calc: an ASE calculator
+    test_set_file: a string with your xyzs test set configurations (and ab-initio data for energies, forces, stresses)
+    E_iso: energy for the isolated atom (removed from dft results)
     use_norm: compute errors on norm of forces and stresses (invariant wrt rotations) VS on the single components (use_norm=False)
+
     returns mae and mav of energy per atom, force, stress
+    writes files for parity plots (dft vs predicted value for energy, forces, stresses) and an errors.dat file
+    with errors per test set config to check if any configuration is contributing disproportionally to the MAEs
    """
 
     test_set = read(test_set_file, index=':')
@@ -234,24 +236,24 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
     e_at_mae, f_mae, s_mae = 0., 0., 0.
     e_at_mav, f_mav, s_mav = 0., 0., 0.
 
-    out_folder = "./" #eventually set?
     errors_file = open(out_folder+'errors.dat','w') #to check if any particular configuration contributes much to the average error
     parity_e, parity_f, parity_s = open(out_folder+'e-parity.dat','w'), open(out_folder+'f-parity.dat','w'), open(out_folder+'s-parity.dat','w')
 
     errors_file.write('# conf_id e_mae e_mav f_mae f_mav s_mae s_mav\n')
 
-    #mace learns and returns E_iso, flare has it =0
-    iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
+    #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
+    chem_specie = test_set[0].get_chemical_symbols()[0]
+    iso_atom = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
     iso_atom.calc = calc
     iso_atom.center(vacuum=10.0)
     E_iso_model = iso_atom.get_potential_energy()
 
-    for itconf, conf in enumerate(tqdm(test_set, desc="computing test set predictions...")):
+    for itconf, conf in enumerate(tqdm(test_set, desc="computing model predictions and errors...")):
 
         #store dft values
         e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
         f_dft = conf.get_forces()
-        s_dft = conf.get_stress()
+        s_dft = conf.get_stress(voigt=False)
 
         #compute values with new calculator
         conf.calc = calc
@@ -259,7 +261,7 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
         #store calc values
         e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
         f_model = conf.get_forces()
-        s_model = conf.get_stress()
+        s_model = conf.get_stress(voigt=False)
 
         #compute mavs (DFT)
         e_at_mav += np.abs(e_at_dft)
@@ -270,7 +272,7 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
             s_model_norm = np.linalg.norm(s_model)
             f_mav += np.average(f_dft_norms)
             s_mav += s_dft_norm
-        else:
+        else: #components-wise
             f_mav += np.average( np.ravel( np.abs(f_dft )))
             s_mav += np.average( np.ravel( np.abs(s_dft )))
 
@@ -279,52 +281,74 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
         if use_norm:
             f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
             s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
-            f_mae += np.average(f_dist_norms) #2-norm
+            f_mae += np.average(f_dist_norms)              #2-norm
             s_mae += s_dist_norm
-        else:
-            f_mae += np.average( np.ravel( np.abs(f_dft - f_model) )) 
-            s_mae += np.average( np.ravel( np.abs(s_dft - s_model) ))
+        else: #compontents-wise
+            f_dist = np.ravel( np.abs(f_dft - f_model) )
+            s_dist = np.ravel( np.abs(s_dft - s_model) )
+            f_mae += np.average( f_dist ) 
+            s_mae += np.average( s_dist )
 
-        #write to output - add use_norm condition
+        #write to output
+        if use_norm:
+            f_dft_print  = np.average(f_dft_norms)
+            f_dist_print = np.average(f_dist_norms)
+            s_dft_print  = s_dft_norm
+            s_dist_print = s_dist_norm
+        else:
+            f_dft_print  = np.average( np.ravel(f_dft) )
+            f_dist_print = np.average( np.ravel(f_dist) )
+            s_dft_print  = np.average( np.ravel(s_dft) )
+            s_dist_print = np.average( np.ravel(s_dist) )
+
         errors_file.write(
             f"{itconf} "
             f"{np.abs(e_at_dft - e_at_model):.3g} "
             f"{np.abs(e_at_dft):.3g} "
-            f"{np.average(f_dist_norms):.3g} "
-            f"{np.average(f_dft_norms):.3g} "
-            f"{s_dist_norm:.3g} "
-            f"{s_dft_norm:.3g}\n"
+            f"{f_dist_print:.3g} "
+            f"{f_dft_print:.3g} "
+            f"{s_dist_print:.3g} "
+            f"{s_dft_print:.3g}\n"
         )
 
         parity_e.write(f"{e_at_dft} {e_at_model}\n")
-        for fd, fm in zip(f_dft_norms, f_model_norms):
-            parity_f.write(f"{fd} {fm}\n")
-        parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
 
+        if use_norm:
+            for fd, fm in zip(f_dft_norms, f_model_norms):
+                parity_f.write(f"{fd} {fm}\n")
+            parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
+        else:
+            for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
+                parity_f.write(f"{fd} {fm}\n")
+            for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
+                parity_s.write(f"{sd} {sm}\n")
 
     errors_file.close()
     parity_e.close()
     parity_f.close()
     parity_s.close()
 
-
-
+    #normalize
     nconf = float(len(test_set))
 
     e_at_mav /= nconf
-    f_mav /= nconf
-    s_mav /= nconf
+    f_mav    /= nconf
+    s_mav    /= nconf
 
     e_at_mae  /= nconf
-    f_mae  /= nconf
-    s_mae  /= nconf
+    f_mae     /= nconf
+    s_mae     /= nconf
 
     return e_at_mae, e_at_mav, f_mae, f_mav, s_mae, s_mav
 
 def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, f_thresh=1e-7):
     """
     Compute excess energy for a range of clusters sizes and structures.
+    Can be thought of as some kind of "physical-style" evaluation (we more or less know
+    what to expect).
     Can't be done parallel! So it's pretty slow. probably ok with gpus.
+
+    directly writes to file the excess energy
     """
 
     icos = []
@@ -430,6 +454,7 @@ def MD_performance(atoms, calc, steps=1000, temperature_K=1000):
 
     return len(atoms)*steps/run_time
 
+
 if __name__ == '__main__':
 
     if len(sys.argv)<1:
@@ -439,6 +464,7 @@ if __name__ == '__main__':
     with open(sys.argv[1],'r') as f:
         setup = yaml.safe_load(f)
 
+    #get ab-initio data and physical system data
     #chemical symbol - single specie only (for now)
     symbol = setup['symbol']
 
@@ -457,29 +483,35 @@ if __name__ == '__main__':
 
     #init calculator
     if setup["calculator"] == "flare_lammps":
-
+        from lammps import lammps as lmp
+        from ase.calculators.lammpslib import LAMMPSlib #ideally, for all potentials, in fact, use direct calculators
         #lammps+flare commands
         cmds= ["pair_style flare",
             "pair_coeff * * "+setup["model_file"]]
-
         #a common calculator for the entire program - some things don't work otherwise
         calc = LAMMPSlib(lmpcmds=cmds, log_file="test.log", keep_alive=True)
     
     elif setup["calculator"] == "flare":
-        exit("not implemented yet")
+        from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
+        sys.exit("not implemented yet")
 
     elif setup["calculator"] == "mace":
+        from mace.calculators import MACECalculator
         calc = MACECalculator(model_path=setup["model_file"], device='cpu') #hard-coded device for now
+    
     elif setup["calculator"] == "mace_mp":
         from mace.calculators import mace_mp
         calc = mace_mp()
 
     elif setup["calculator"] == "nequip":
-        exit("not implemented yet")
+        sys.exit("not implemented yet")
+    
+    else:
+        sys.exit(setup["calculator"]+" is not a known calc type")
 
     #compute bulk&surface values
     print('computing dft properties')
-    bulk_properties = eos_fcc_benchmark(symbol, calc, a_ref)
+    bulk_properties = eos_fcc_fit(symbol, calc, a_ref)
     surf_properties = low_index_surfen(symbol, calc, bulk_properties['fcc_bulk']['e0'], bulk_properties['fcc_bulk']['a0'])
     properties = {**surf_properties, **bulk_properties}
 
@@ -531,7 +563,7 @@ if __name__ == '__main__':
     yaml.dump(properties, f)
     f.close()
 
-    #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
+    #ADSORBATE/DIMER: CHECK FOR INSTABILITIES - possibly add eos
     print('computing distant atom curves')
     d, e = adsorbate_curve(symbol,calc)
     f = open('adsorbate_curve.dat','w')
@@ -541,6 +573,12 @@ if __name__ == '__main__':
 
     d, e = dimer_curve(symbol,calc)
     f = open('dimer_curve.dat','w')
+    for dd, ee in zip(d, e):
+        f.write(str(dd)+' '+str(ee)+'\n')
+    f.close()
+
+    d, e = eos_fcc_large_test(symbol, calc, properties['fcc_bulk']['a0'])
+    f = open('large_eos_curve.dat','w')
     for dd, ee in zip(d, e):
         f.write(str(dd)+' '+str(ee)+'\n')
     f.close()
