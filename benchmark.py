@@ -238,7 +238,7 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True):
     errors_file = open(out_folder+'errors.dat','w') #to check if any particular configuration contributes much to the average error
     parity_e, parity_f, parity_s = open(out_folder+'e-parity.dat','w'), open(out_folder+'f-parity.dat','w'), open(out_folder+'s-parity.dat','w')
 
-    errors_file.write('# conf_id e_mae e_mav f_mae f_mav s_mae s_mav')
+    errors_file.write('# conf_id e_mae e_mav f_mae f_mav s_mae s_mav\n')
 
     #mace learns and returns E_iso, flare has it =0
     iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
