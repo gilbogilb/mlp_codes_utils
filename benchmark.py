@@ -23,9 +23,8 @@ from ase.md.langevin import Langevin
 
 #add output folder
 #try su stresses
-#make a plotter with everything
-#divide eos fit eos test
 #extend to more than one chemical specie
+#add phonons?
 
 try:
     from tqdm import tqdm
@@ -142,15 +141,16 @@ def low_index_surfen(symbol, calc, ecohesive, lattice_constant, size=(2,2,7), va
 
     return surface_properties
 
-def eos_fcc_large_test(symbol, calc, alat, pmppercent=50.):
+def eos_fcc_large_test(symbol, calc, alat, pmppercent=100.):
     """
-    Only computes and returns volume vs energy. Can be used to look at performance over a wide range
+    Only computes and returns lattice constant vs energy for a FCC system. Can be used to look at performance over a wide range
     of lattice constants to look at what happens when you're far from the minimum
     (e.g. to check for ghost holes in your potential).
+    computes energy for FCC over a range of lattice constants going from alat - pmpercent/2./100.*alat to alat + pmpercente*alat/100.
     """
 
-    volumes, energies = [], []
-    bounds = [alat-pmppercent*alat/100., alat+pmppercent/100]
+    lattices, energies = [], []
+    bounds = [alat-pmppercent*alat/100./2., alat+pmppercent/100]
     alats             = np.linspace(bounds[0] , bounds[1], 40)
 
     for alat in alats:
@@ -159,9 +159,9 @@ def eos_fcc_large_test(symbol, calc, alat, pmppercent=50.):
         poten    = sys.get_potential_energy()
         vol      = sys.get_volume()
         energies.append(poten)
-        volumes.append(vol)
+        lattices.append((vol/len(sys)*4. )**(1 / 3.0))
 
-    return volumes, energies
+    return lattices, energies
 
 def adsorbate_curve(symbol, calc, npoints=40):
     """
@@ -463,6 +463,7 @@ if __name__ == '__main__':
     #load config.yml settings 
     with open(sys.argv[1],'r') as f:
         setup = yaml.safe_load(f)
+    
 
     #get ab-initio data and physical system data
     #chemical symbol - single specie only (for now)
@@ -555,7 +556,7 @@ if __name__ == '__main__':
     #COMPUTE MD Computational PERFORMANCE
     print('computing performance')
     ico = ih(symbol, 4, a_ref)
-    properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=100)
+    properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=500)
 
     print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
     #save to file
