@@ -341,7 +341,7 @@ def mae_mav_test(calc, test_set_file, E_iso, use_norm=True, out_folder='./'):
 
     return e_at_mae, e_at_mav, f_mae, f_mav, s_mae, s_mav
 
-def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, f_thresh=1e-7):
+def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, octa=True, deca=True, f_thresh=1e-7):
     """
     Compute excess energy for a range of clusters sizes and structures.
     Can be thought of as some kind of "physical-style" evaluation (we more or less know
@@ -355,50 +355,67 @@ def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, f_thresh=1e-7
     octas = []
     decas = []
 
+    geometries = []
+    names = []
+
     #####################
     #generate structures#
     #####################
 
-    ico_iter = 2
-    curr_ico = ih(symbol, ico_iter, alat)
-    while(len(curr_ico)<max_size):
-        icos.append(curr_ico)
-        ico_iter +=1
+    if ico:
+        ico_iter = 2
         curr_ico = ih(symbol, ico_iter, alat)
-    
-    deca_iter = 2
-    curr_deca = dh(symbol, deca_iter, deca_iter, 0, alat)
-    while(len(curr_deca)<max_size):
-        decas.append(curr_deca)
-        for i in [-1, 0, 1]:
-            for j in range(2):
-                curr_deca = dh(symbol, deca_iter, deca_iter+i, j, alat)
-                if(len(curr_deca)<max_size):
-                    decas.append(curr_deca)
-        deca_iter +=1
+        while(len(curr_ico)<max_size):
+            icos.append(curr_ico)
+            ico_iter +=1
+            curr_ico = ih(symbol, ico_iter, alat)
+        names.append('ico')
+        ico_sizes  = [len(ico) for ico in icos]
+        geometries += [icos]
+        print(f'Built {len(icos)} icos with up to {max(ico_sizes)} atoms') 
+
+    if deca:
+        deca_iter = 2
         curr_deca = dh(symbol, deca_iter, deca_iter, 0, alat)
-    
-    octa_iter = 3
-    curr_octa = oh(symbol, octa_iter, 1, alat) #regular truncated octahedron: l = 2*cut+1 
-    while(len(curr_octa)<max_size):
-        octas.append(curr_octa)
-        curr_octa = oh(symbol, octa_iter, int((octa_iter-1)/3), alat) #cuboctahedron: l = 3*cut + 1 (not always possible)
-        if(len(curr_octa)<max_size):
+        while(len(curr_deca)<max_size):
+            decas.append(curr_deca)
+            for i in [-1, 0, 1]:
+                for j in range(2):
+                    curr_deca = dh(symbol, deca_iter, deca_iter+i, j, alat)
+                    if(len(curr_deca)<max_size):
+                        decas.append(curr_deca)
+            deca_iter +=1
+            curr_deca = dh(symbol, deca_iter, deca_iter, 0, alat)
+        names.append('deca')
+        deca_sizes = [len(deca) for deca in decas]
+        geometries += [decas]
+        print(f'Built {len(decas)} decas with up to {max(deca_sizes)} atoms') 
+
+
+    if octa:
+        octa_iter = 3
+        curr_octa = oh(symbol, octa_iter, 1, alat) #regular truncated octahedron: l = 2*cut+1 
+        while(len(curr_octa)<max_size):
             octas.append(curr_octa)
-        octa_iter +=1
-        curr_octa = oh(symbol, octa_iter, int((octa_iter-1)/2), alat)
+            curr_octa = oh(symbol, octa_iter, int((octa_iter-1)/3), alat) #cuboctahedron: l = 3*cut + 1 (not always possible)
+            if(len(curr_octa)<max_size):
+                octas.append(curr_octa)
+            octa_iter +=1
+            curr_octa = oh(symbol, octa_iter, int((octa_iter-1)/2), alat)
+        names.append('octa')
+        octa_sizes  = [len(octa) for octa in octas]
+        geometries += [octas]
+        print(f'Built {len(octas)} octas with up to {max(octa_sizes)} atoms') 
 
-    ico_sizes  = [len(ico) for ico in icos]
-    octa_sizes  = [len(octa) for octa in octas]
-    deca_sizes = [len(deca) for deca in decas]
 
-    print('Built structures:', len(icos), 'icos,', len(octas), 'octas,',len(decas),'decas')
-    print(f'Max ico  size: {max(ico_sizes)}')
-    print(f'Max octa size: {max(octa_sizes)}')
-    print(f'Max deca size: {max(deca_sizes)}')
 
-    geometries = [icos, octas, decas]
-    names = ['ico', 'octa', 'deca']
+#    print('Built structures:', len(icos), 'icos,', len(octas), 'octas,',len(decas),'decas')
+#    print(f'Max ico  size: {max(ico_sizes)}')
+#    print(f'Max octa size: {max(octa_sizes)}')
+#    print(f'Max deca size: {max(deca_sizes)}')
+    
+#    geometries = [icos, octas, decas]
+#    names = ['ico', 'octa', 'deca']
 
     #####################
     #Optimize structures#
