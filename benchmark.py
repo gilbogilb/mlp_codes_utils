@@ -18,6 +18,7 @@ from ase.eos import EquationOfState as eos
 from ase.optimize import LBFGS
 import time
 from ase.md.langevin import Langevin
+from ase.constraints import FixAtoms
 
 #calculators are imported later on, depending on your chosen calc in the yaml setup file
 
@@ -100,24 +101,54 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
 
     return bulk_properties
 
-def low_index_surfen(symbol, calc, ecohesive, lattice_constant, size=(2,2,7), vacuum=6.5):
+def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(2,2,7), vacuum=6.5, relax=True, relax_layers=2):
     """
-    Compute surface energy of relaxed fcc low index surfaces.
-    Slab size and vacuum on EACH SIDE of the slab can be modified 
-    to match your ab-initio computations.
+    Compute surface energy of fcc low index surfaces (111) (110) (100).
+    
+    Parameters:
+    symbol:
+        Chemical symbol for the system
+    calc:
+        ase calculator to perform computations
+    lattice_constant:
+        lattice constant to create the slabs. Part of the system can be relaxed (see relax, relax_layers), while others are fixed to the
+        value initialized according to this variable
+    ecohesive:
+        decide if you want to pass your precomputed cohesive energy. It is better to leave this to default None and let the function recompute it
+        for a more stable estimation of surface energy wrt eg number of layers.
+    size:
+        size of the slab models (in atoms along x,y,z)
+    vacuum:
+        vacuum on each side of the slab, to match your reference DFT calculations
+    relax:
+        True (default) if the structure should be relaxed. Only the first relax_layers on each side are relaxed, the rest of the atoms are kept fixed.
+    relax_layers:
+        number of layers to be relaxed.
 
     Returns a dictionary with the computed properties.
     """
 
     surface_properties = dict({})
-    surfactories=dict({"fcc100":fcc100,
-                     "fcc110":fcc110,
-                     "fcc111":fcc111})
+    surfactories = dict({"fcc100": fcc100,
+                     "fcc110": fcc110,
+                     "fcc111": fcc111})
     
-    #different potentials have different conventions (return or not the ab-initio isolated atom energy)
-    iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
-    iso_atom.calc = calc
-    iso_atom.center(vacuum=10.0)
+    if ecohesive is not None:
+        #different potentials have different conventions (return or not the ab-initio isolated atom energy)
+        iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        e_iso = iso_atom.get_potential_energy()
+        e_bulk = (abs(e_iso) + abs(ecohesive))*-1. #ensure right sign
+    
+    else:
+        #explictly compute ecohesive from scratch
+        bulkfcc = fcc(symbol, latticeconstant=lattice_constant)
+        bulkfcc.calc = calc
+        if relax:
+            dyn2 = LBFGS(bulkfcc,logfile="bfgs.log")
+            dyn2.run(fmax=1e-5)
+        e_bulk = bulkfcc.get_potential_energy()/len(bulkfcc)
 
     for surfact, surfname in zip(surfactories.values(), surfactories.keys()):
 
@@ -128,15 +159,24 @@ def low_index_surfen(symbol, calc, ecohesive, lattice_constant, size=(2,2,7), va
         #initialize calculator
         surf.calc = calc
 
-        #relax the structure
-        dyn = LBFGS(surf,logfile="bfgs.log")
-        dyn.run(fmax=1e-5)
+        if relax:
+            #fix deep bulk atoms
+            layers_ids = surf.get_tags()
+            min_id, max_id = 1, max(layers_ids)
+            min_id_fix, max_id_fix = min_id + relax_layers, max_id - relax_layers
+            mask = [True if (lay_id>=min_id_fix and lay_id<=max_id_fix) else False for lay_id in layers_ids ]
+            c = FixAtoms(mask=mask)
+            surf.set_constraint(c)
+
+            #relax the structure(s)
+            dyn = LBFGS(surf,logfile="bfgs.log")
+            dyn.run(fmax=1e-5)
 
         #compute surface energy
         cell    = surf.get_cell()
         surface = np.linalg.norm(np.cross(cell[0],cell[1]))
-        poten   = surf.get_potential_energy() - iso_atom.get_potential_energy()*len(surf)
-        surfen  = (poten - ecohesive*len(surf))/2./surface*16.02
+        poten   = surf.get_potential_energy()
+        surfen  = (poten - e_bulk*len(surf))/(2.*surface)*16.02
         surface_properties[surfname]=dict({"gamma":float(surfen)})
 
     return surface_properties
@@ -530,7 +570,7 @@ if __name__ == '__main__':
     #compute bulk&surface values
     print('computing dft properties')
     bulk_properties = eos_fcc_fit(symbol, calc, a_ref)
-    surf_properties = low_index_surfen(symbol, calc, bulk_properties['fcc_bulk']['e0'], bulk_properties['fcc_bulk']['a0'])
+    surf_properties = low_index_surfen(symbol, calc, bulk_properties['fcc_bulk']['a0'])
     properties = {**surf_properties, **bulk_properties}
 
     #compare with known dft values, compute and store percentage errors
@@ -573,7 +613,7 @@ if __name__ == '__main__':
     #COMPUTE MD Computational PERFORMANCE
     print('computing performance')
     ico = ih(symbol, 4, a_ref)
-    properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=500)
+    properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=100)
 
     print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
     #save to file
