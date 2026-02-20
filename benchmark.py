@@ -256,130 +256,193 @@ def dimer_curve(symbol, calc, npoints=40):
 
     return distances, energies
 
-def mae_mav_test(calc, test_set_file, E_iso, use_norm=True, out_folder='./'):
+def mae_mav_test(calc, test_set_files, E_iso, use_norm=True, out_folder='./'):
 
     """
     Compute mae/mav on a test set. NB: energies are per atom.
 
     calc: an ASE calculator
-    test_set_file: a string with your xyzs test set configurations (and ab-initio data for energies, forces, stresses)
+    test_set_files: a string with your xyzs test set configurations (and ab-initio data for energies, forces, stresses) or a list of test sets files
     E_iso: energy for the isolated atom (removed from dft results)
     use_norm: compute errors on norm of forces and stresses (invariant wrt rotations) VS on the single components (use_norm=False)
 
-    returns mae and mav of energy per atom, force, stress
+    returns a list of dicts with mae and mav of energy per atom, force, stress
     writes files for parity plots (dft vs predicted value for energy, forces, stresses) and an errors.dat file
     with errors per test set config to check if any configuration is contributing disproportionally to the MAEs
    """
+    
+    if type(test_set_files)==str:
+        test_set_files = [test_set_files]
 
-    test_set = read(test_set_file, index=':')
+    results = []
+    
+    for test_set_file in test_set_files:
 
-    e_at_mae, f_mae, s_mae = 0., 0., 0.
-    e_at_mav, f_mav, s_mav = 0., 0., 0.
+        test_set = read(test_set_file, index=':')
 
-    errors_file = open(out_folder+'errors.dat','w') #to check if any particular configuration contributes much to the average error
-    parity_e, parity_f, parity_s = open(out_folder+'e-parity.dat','w'), open(out_folder+'f-parity.dat','w'), open(out_folder+'s-parity.dat','w')
+        e_at_mae, f_mae, s_mae = 0., 0., 0.
+        e_at_mav, f_mav, s_mav = 0., 0., 0.
 
-    errors_file.write('# conf_id e_mae e_mav f_mae f_mav s_mae s_mav\n')
+        this_test = {}
 
-    #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
-    chem_specie = test_set[0].get_chemical_symbols()[0]
-    iso_atom = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
-    iso_atom.calc = calc
-    iso_atom.center(vacuum=10.0)
-    E_iso_model = iso_atom.get_potential_energy()
+        errors_file = open(out_folder+'_'+test_set_file+'_'+'errors.dat','w') #to check if any particular configuration contributes much to the average error
+        parity_e, parity_f, parity_s = open(out_folder+'_'+test_set_file+'_'+'e-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'f-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'s-parity.dat','w')
 
-    for itconf, conf in enumerate(tqdm(test_set, desc="computing model predictions and errors...")):
+        errors_file.write('# conf_id e_mae e_mav f_mae f_mav s_mae s_mav\n')
 
-        #store dft values
-        e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
-        f_dft = conf.get_forces()
-        s_dft = conf.get_stress(voigt=False)
+        s_count = 0
 
-        #compute values with new calculator
-        conf.calc = calc
+        #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
+        chem_specie = test_set[0].get_chemical_symbols()[0]
+        iso_atom = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        E_iso_model = iso_atom.get_potential_energy()
 
-        #store calc values
-        e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
-        f_model = conf.get_forces()
-        s_model = conf.get_stress(voigt=False)
+        for itconf, conf in enumerate(tqdm(test_set, desc="computing model predictions and errors...")):
 
-        #compute mavs (DFT)
-        e_at_mav += np.abs(e_at_dft)
-        if use_norm:
-            f_dft_norms = [np.linalg.norm(f) for f in f_dft]
-            f_model_norms = [np.linalg.norm(f) for f in f_model]
-            s_dft_norm = np.linalg.norm(s_dft)
-            s_model_norm = np.linalg.norm(s_model)
-            f_mav += np.average(f_dft_norms)
-            s_mav += s_dft_norm
-        else: #components-wise
-            f_mav += np.average( np.ravel( np.abs(f_dft )))
-            s_mav += np.average( np.ravel( np.abs(s_dft )))
 
-        #compute maes
-        e_at_mae += np.abs(e_at_dft-e_at_model)
-        if use_norm:
-            f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
-            s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
-            f_mae += np.average(f_dist_norms)              #2-norm
-            s_mae += s_dist_norm
-        else: #compontents-wise
-            f_dist = np.ravel( np.abs(f_dft - f_model) )
-            s_dist = np.ravel( np.abs(s_dft - s_model) )
-            f_mae += np.average( f_dist ) 
-            s_mae += np.average( s_dist )
 
-        #write to output
-        if use_norm:
-            f_dft_print  = np.average(f_dft_norms)
-            f_dist_print = np.average(f_dist_norms)
-            s_dft_print  = s_dft_norm
-            s_dist_print = s_dist_norm
+            #store dft values
+            e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
+            f_dft = conf.get_forces()
+            #check stress
+            stress_available = True
+            try:
+                s_dft = conf.get_stress(voigt=False)
+            except Exception:
+                stress_available = False
+
+            #compute values with new calculator
+            conf.calc = calc
+
+            #store calc values
+            e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
+            f_model = conf.get_forces()
+            # Check model stress
+            if stress_available:
+                try:
+                    s_model = conf.get_stress(voigt=False)
+                except Exception:
+                    stress_available = False
+
+            if not stress_available:
+                print(f"Warning: stresses not available for frame {itconf} in {test_set_file}. Skipping stress errors.")
+            else:
+                s_count +=1
+
+            #compute mavs (DFT)
+            e_at_mav += np.abs(e_at_dft)
+            if use_norm:
+                f_dft_norms = [np.linalg.norm(f) for f in f_dft]
+                f_model_norms = [np.linalg.norm(f) for f in f_model]
+                f_mav += np.average(f_dft_norms)
+                if stress_available:
+                    s_dft_norm = np.linalg.norm(s_dft)
+                    s_model_norm = np.linalg.norm(s_model)
+                    s_mav += s_dft_norm
+            else: #components-wise
+                f_mav += np.average( np.ravel( np.abs(f_dft )))
+                if stress_available:
+                    s_mav += np.average( np.ravel( np.abs(s_dft )))
+
+            #compute maes
+            e_at_mae += np.abs(e_at_dft-e_at_model)
+            if use_norm:
+                f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
+                f_mae += np.average(f_dist_norms) #2-norm
+                if stress_available:
+                    s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
+                    s_mae += s_dist_norm
+            else: #compontents-wise
+                f_dist = np.ravel( np.abs(f_dft - f_model) )
+                f_mae += np.average( f_dist ) 
+                if stress_available:
+                    s_dist = np.ravel( np.abs(s_dft - s_model) )
+                    s_mae += np.average( s_dist )
+
+            #write to output
+            if use_norm:
+                f_dft_print  = np.average(f_dft_norms)
+                f_dist_print = np.average(f_dist_norms)
+                if stress_available:
+                    s_dft_print  = s_dft_norm
+                    s_dist_print = s_dist_norm
+            else:
+                f_dft_print  = np.average( np.ravel(f_dft) )
+                f_dist_print = np.average( np.ravel(f_dist) )
+                if stress_available:
+                    s_dft_print  = np.average( np.ravel(s_dft) )
+                    s_dist_print = np.average( np.ravel(s_dist) )
+
+            errors_file.write(
+                f"{itconf} "
+                f"{np.abs(e_at_dft - e_at_model):.3g} "
+                f"{np.abs(e_at_dft):.3g} "
+                f"{f_dist_print:.3g} "
+                f"{f_dft_print:.3g} "
+            )
+            if stress_available:
+                errors_file.write(
+                    f"{s_dist_print:.3g} "
+                    f"{s_dft_print:.3g}"
+                )
+            errors_file.write("\n")
+
+            parity_e.write(f"{e_at_dft} {e_at_model}\n")
+
+            if use_norm:
+                for fd, fm in zip(f_dft_norms, f_model_norms):
+                    parity_f.write(f"{fd} {fm}\n")
+                if stress_available:
+                    parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
+            else:
+                for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
+                    parity_f.write(f"{fd} {fm}\n")
+                if stress_available:
+                    for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
+                        parity_s.write(f"{sd} {sm}\n")
+
+        errors_file.close()
+        parity_e.close()
+        parity_f.close()
+        parity_s.close()
+
+        #normalize
+        nconf = float(len(test_set))
+
+        e_at_mav /= nconf
+        f_mav    /= nconf
+        s_mav    /= s_count
+
+        e_at_mae  /= nconf
+        f_mae     /= nconf
+        s_mae     /= s_count
+
+        this_test[test_set_file] = {
+            'energy_per_atom': {},
+            'forces': {},
+            'stress': {}
+            }
+        
+        this_test[test_set_file]['energy_per_atom']['mae'] = float(e_at_mae)
+        this_test[test_set_file]['energy_per_atom']['mav'] = float(e_at_mav)
+        this_test[test_set_file]['energy_per_atom']['ratio_x100'] = float(e_at_mae/e_at_mav*100)
+
+        this_test[test_set_file]['forces']['mae'] = float(f_mae)
+        this_test[test_set_file]['forces']['mav'] = float(f_mav)
+        this_test[test_set_file]['forces']['ratio_x100'] = float(f_mae/f_mav*100)
+
+        if s_count > 0:
+            this_test[test_set_file]['stress']['mae'] = float(s_mae)
+            this_test[test_set_file]['stress']['mav'] = float(s_mav)
+            this_test[test_set_file]['stress']['ratio_x100'] = float(s_mae/s_mav*100)
         else:
-            f_dft_print  = np.average( np.ravel(f_dft) )
-            f_dist_print = np.average( np.ravel(f_dist) )
-            s_dft_print  = np.average( np.ravel(s_dft) )
-            s_dist_print = np.average( np.ravel(s_dist) )
+            this_test[test_set_file]['stress'] = None
 
-        errors_file.write(
-            f"{itconf} "
-            f"{np.abs(e_at_dft - e_at_model):.3g} "
-            f"{np.abs(e_at_dft):.3g} "
-            f"{f_dist_print:.3g} "
-            f"{f_dft_print:.3g} "
-            f"{s_dist_print:.3g} "
-            f"{s_dft_print:.3g}\n"
-        )
+        results.append(this_test)
 
-        parity_e.write(f"{e_at_dft} {e_at_model}\n")
-
-        if use_norm:
-            for fd, fm in zip(f_dft_norms, f_model_norms):
-                parity_f.write(f"{fd} {fm}\n")
-            parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
-        else:
-            for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
-                parity_f.write(f"{fd} {fm}\n")
-            for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
-                parity_s.write(f"{sd} {sm}\n")
-
-    errors_file.close()
-    parity_e.close()
-    parity_f.close()
-    parity_s.close()
-
-    #normalize
-    nconf = float(len(test_set))
-
-    e_at_mav /= nconf
-    f_mav    /= nconf
-    s_mav    /= nconf
-
-    e_at_mae  /= nconf
-    f_mae     /= nconf
-    s_mae     /= nconf
-
-    return e_at_mae, e_at_mav, f_mae, f_mav, s_mae, s_mav
+    return results
 
 def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, octa=True, deca=True, f_thresh=1e-7):
     """
@@ -537,7 +600,11 @@ if __name__ == '__main__':
     dft110 = setup['110_surface_energy']
     dft100 = setup['100_surface_energy']
 
-    test_set_file=setup['test_set_file']
+    test_set_files=setup['test_set_file']
+
+    #two optional longer tests
+    compute_performance   = setup.get('compute_performance', False)
+    compute_excess_energy = setup.get('compute_exces_energy', False)
 
     #init calculator
     if setup["calculator"] == "flare_lammps":
@@ -590,38 +657,26 @@ if __name__ == '__main__':
 
     #MAE, MAV on test set
     print('computing test set errors')
-    e_mae, e_mav, f_mae, f_mav, s_mae, s_mav = mae_mav_test(calc, test_set_file, E_iso)
 
-    properties['test_set'] = {
-        'energy_per_atom': {},
-        'forces': {},
-        'stress': {}
-        }
-    
-    properties['test_set']['energy_per_atom']['mae'] = float(e_mae)
-    properties['test_set']['energy_per_atom']['mav'] = float(e_mav)
-    properties['test_set']['energy_per_atom']['ratio_x100'] = float(e_mae/e_mav*100)
+    results = mae_mav_test(calc, test_set_files, E_iso)
 
-    properties['test_set']['forces']['mae'] = float(f_mae)
-    properties['test_set']['forces']['mav'] = float(f_mav)
-    properties['test_set']['forces']['ratio_x100'] = float(f_mae/f_mav*100)
-
-    properties['test_set']['stress']['mae'] = float(s_mae)
-    properties['test_set']['stress']['mav'] = float(s_mav)
-    properties['test_set']['stress']['ratio_x100'] = float(s_mae/s_mav*100)
+    for dic in results:
+        properties.update(dic)
 
     #COMPUTE MD Computational PERFORMANCE
-    print('computing performance')
-    ico = ih(symbol, 4, a_ref)
-    properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=100)
+    if compute_performance:
+        print('computing performance')
+        ico = ih(symbol, 4, a_ref)
+        properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=500)
 
     print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
+
     #save to file
     f = open(setup["calculator"]+"_benchmark.yaml",'w')
     yaml.dump(properties, f)
     f.close()
 
-    #ADSORBATE/DIMER: CHECK FOR INSTABILITIES - possibly add eos
+    #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
     print('computing distant atom curves')
     d, e = adsorbate_curve(symbol,calc)
     f = open('adsorbate_curve.dat','w')
@@ -642,7 +697,8 @@ if __name__ == '__main__':
     f.close()
 
     #EXCESS ENERGIES
-    print('computing excess energies')
-    clusters_excess_energy(symbol,calc, properties['fcc_bulk']['a0'], properties['fcc_bulk']['e0'], max_size=500)
+    if compute_excess_energy:
+        print('computing excess energies')
+        clusters_excess_energy(symbol,calc, properties['fcc_bulk']['a0'], properties['fcc_bulk']['e0'], max_size=500)
 
     print("Done.")
