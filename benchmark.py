@@ -546,8 +546,9 @@ def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, oct
 
             #compute excess energy
             N = len(c)
-            excess = (c.get_potential_energy() - N*(ecoh+E_iso_model))/(N**(2./3.))
-            stream.write(f"{N} {excess}\n")
+            pot_ene = c.get_potential_energy()
+            excess = (pot_ene - N*(ecoh+E_iso_model))/(N**(2./3.))
+            stream.write(f"{N} {pot_ene} {excess}\n")
 
         stream.close()
 
