@@ -2,6 +2,7 @@
 #code by davide alimonti
 #extensions: #add stress in ase2flare?
 #add stress error
+#take care with randomness - here, np.radnom is used, should set the seed in np as well;
 import numpy as np
 import sys
 import time
@@ -10,7 +11,8 @@ from flare.bffs.sgp._C_flare import   B2, NormalizedDotProduct, SparseGP, Struct
 from flare.bffs.sgp import SGP_Wrapper
 from flare.learners.otf import OTF
 from flare.io import otf_parser
-from flare.scripts.otf_train import get_gp_calc
+from flare.scripts.otf_train import get_sgp_calc
+from flare.atoms import FLARE_Atoms
 import json
 import tempfile
 import copy
@@ -25,6 +27,8 @@ from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 from datetime import datetime
 from scipy.special import huber
+from makesets import make_random_sets
+from copy import deepcopy
 
 try:
     from tqdm import tqdm
@@ -34,10 +38,16 @@ except:
 
 
 
-def ase2flare(struct, species_code, isolated_energies):
+
+
+def ase2flare(struct, config):
     """
     Takes an ASE structure and returns a FLARE structure object
     """
+
+    species_code = config["species_code"]
+    isolated_energies = config["isolated_energies"]
+
     noa = len(struct.numbers)
     coded_species=[]
     eisol = 0
@@ -53,7 +63,33 @@ def ase2flare(struct, species_code, isolated_energies):
     else:
         flare_struct.forces = struct.get_forces().reshape(-1)
     flare_struct.energy = np.array([struct.calc.get_potential_energy() - eisol])
+    if "stresses" in struct.arrays:
+        pass
     return flare_struct
+
+def flare_atoms_to_structure(flare_atoms):
+    from flare.structure import Structure
+
+    cell = flare_atoms.get_cell().array
+    positions = flare_atoms.get_positions()
+    species = flare_atoms.get_atomic_numbers()
+
+    unique = sorted(set(species))
+    mapping = {Z: i for i, Z in enumerate(unique)}
+    species = [mapping[Z] for Z in species]
+
+    struc = Structure(cell, species, positions)
+
+    if flare_atoms.calc is not None:
+        struc.energy = flare_atoms.get_potential_energy()
+        struc.forces = flare_atoms.get_forces().flatten()
+        try:
+            struc.stresses = flare_atoms.get_stress()
+        except:
+            pass
+
+    return struc
+
 
 def check_mae(gp_model, train_struct):
     """
@@ -88,9 +124,8 @@ def log_errors(gp_model,testsets):
     file_maes_f.flush()
     return
 
-ef compute_negative_likelihood_grad_stable(
-    hyperparameters, sparse_gp, precomputed=False
-):
+def compute_negative_likelihood_grad_stable(
+    hyperparameters, sparse_gp, precomputed=False):
     """
     Compute the negative log likelihood and gradient with respect to the
     hyperparameters.
@@ -105,7 +140,15 @@ ef compute_negative_likelihood_grad_stable(
 
     return negative_likelihood, negative_likelihood_gradient
 
-def optimize_hyps(gp_model,opt_method,minhyps,maxhyps,max_iterations,bounds,gtol,loss_function_config):
+def optimize_hyps(gp_model, 
+                opt_method,
+                minhyps,
+                maxhyps,
+                max_iterations,
+                bounds,
+                gtol,
+                loss_function_config):
+
     """
     Finds optimal hyperparameters for the gp_model, using its current hyps as starting guess.
     If the found hyps are outside the defined minhyps,maxhyps, it will return True - signalling a failure
@@ -113,10 +156,10 @@ def optimize_hyps(gp_model,opt_method,minhyps,maxhyps,max_iterations,bounds,gtol
     """
     rollback = False
     initial_guess = gp_model.hyperparameters
-    old_hyps      = np.array(initial_guess) # for rollback
+    old_hyps      = np.array(initial_guess) # save in case of rollback
     if loss_function_config["name"] == "negative_likelihood":
         loss_function = compute_negative_likelihood_grad_stable
-        arguments = (gp_model,True)
+        arguments = (gp_model, True)
         gp_model.precompute_KnK()
         jac = True
     elif loss_function_config["name"] == "huber" :
@@ -132,13 +175,14 @@ def optimize_hyps(gp_model,opt_method,minhyps,maxhyps,max_iterations,bounds,gtol
                 jac=jac,
                 options={
                     "disp": False,
-                    "gtol":gtol ,
+                    "gtol": gtol ,
                     "maxiter": max_iterations,
                     "eps" : np.array([1e-3,1e-4,1e-4,1e-5])
                 }
             )
-    print(optimization_result)
+    #print(optimization_result)
     # Assign likelihood gradient, if it didn't explode
+    #print(f'old hyps: {old_hyps}\n optimized hyps: {optimization_result.x}')
     if np.all(np.abs(optimization_result.x) < maxhyps) and np.all(np.abs(optimization_result.x) > minhyps) :
         # Optimization succedeed, so set new hyps
         gp_model.set_hyperparameters(np.abs(optimization_result.x))
@@ -149,10 +193,11 @@ def optimize_hyps(gp_model,opt_method,minhyps,maxhyps,max_iterations,bounds,gtol
     else:
         # Optimization failed. Flag this, and reset old hyps.
         gp_model.set_hyperparameters(old_hyps)
-        file_log.write("Optimization resulted in exploded or collapsed hyps!\n")
-        file_log.write(f"Would have been : {np.array2string(np.abs(optimization_result.x))}"+'\n')
+        #file_log.write("Optimization resulted in exploded or collapsed hyps!\n")
+        #file_log.write(f"Would have been : {np.array2string(np.abs(optimization_result.x))}"+'\n')
         rollback = True
-        file_log.write("Hyps NOT updated\n")
+        #file_log.write("Hyps NOT updated\n")
+
     return rollback
 
 def write_to_json(gp_model,power,radial_basis_type,
@@ -211,9 +256,9 @@ def write_to_json(gp_model,power,radial_basis_type,
 
 
 def initialize_gp(
-        sigma,power,radial_basis_type,cutoff_function,cutoff,
-        nspecies,nmax,lmax,
-        sigma_e,sigma_f,sigma_s) :
+        sigma, power, radial_basis_type, cutoff_function, cutoff,
+        nspecies, nmax, lmax,
+        sigma_e, sigma_f, sigma_s) :
     """
     Create an empty model with working kernels.
     Also creates the kernel and descriptor objects.
@@ -221,17 +266,8 @@ def initialize_gp(
     kernels = [ NormalizedDotProduct(sigma , power) ]
     descriptors = [ B2(radial_basis_type,cutoff_function,[0,cutoff],[] , [nspecies , nmax, lmax]) ]
     gp_model_init = SparseGP( kernels, sigma_e , sigma_f, sigma_s)
-    return gp_model_init,descriptors ,kernels
+    return gp_model_init, descriptors, kernels
 
-def configurations_order(configurations_list : list ,random_shuffle : bool, shuffle_seed : int ) -> list:
-    """
-    If random_shuffle is false, it will return configurations_list as provided.
-    If random_shuffle is true , it will return the list shuffled with seed shuffle_seed
-    """
-    if random_shuffle:
-        random.seed(shuffle_seed)
-        random.shuffle(configurations_list)
-    return configurations_list
 
 def model_from_dict(structuresdict,sparse_indices,species_code,hyps,modelstruct):
     """
@@ -349,17 +385,17 @@ def huber_loss(hyperparameters,gp_model,weights):
 
     return loss
 
-def train_offline(config_file, train_set, test_set):
+def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
-    config = yaml.safe_load(open(config_file,'r'))
-    gp_model, descriptors, kernels = initialize_gp(**config["gp_config"]
+    #config = yaml.safe_load(open(config_file,'r'))
 
-    species_code = config["species_code"]
-    isolated_energies = config["isolated_energies"]
-    cutoff = config["gp_config"]["cutoff"]
+    #use function from flare package
+    #set stress_training in the config file, eventually
+    flare_calc, kernels = get_sgp_calc(config["flare_calc"])
+    #returns a flare ASE calculator and the kernels
+
     optimize_every = config["optimize_every"]
-
     min_optimize = config["min_optimize"]
     max_optimize = config["max_optimize"]
 
@@ -368,20 +404,24 @@ def train_offline(config_file, train_set, test_set):
 
     nr_initial_envs = config["nr_initial_envs"]
 
+    species_code = config["species_code"]
+    isolated_energies = config["isolated_energies"]
+
     files_prefix = config["files_prefix"]
-    file_log  =open(f"training_{files_prefix}.log",'w')
-    file_hyps =open(f"hyps_{files_prefix}.dat",'w')
-    file_lik  =open(f"lik_{files_prefix}.dat",'w')
-    file_maes_e=open(f"e_maes_{files_prefix}.dat",'w')
-    file_maes_f=open(f"f_maes_{files_prefix}.dat",'w')
 
     sparse_indices      = []
     training_structures = []
 
-    oracle_calls=0
-    nsparse = 0
-    last_optim = 0
-    step = 0
+    oracle_calls = 0
+    nsparse      = 0
+    last_optim   = 0
+    step         = 0
+
+    file_log    = open(f"training_{files_prefix}.log",'w')
+    file_hyps   = open(f"hyps_{files_prefix}.dat",'w')
+    file_lik    = open(f"lik_{files_prefix}.dat",'w')
+    file_maes_e = open(f"e_maes_{files_prefix}.dat",'w')
+    file_maes_f = open(f"f_maes_{files_prefix}.dat",'w')
 
     #log initial stuff
     file_log.write("You are running Offline Learner version 4-11-2025\n")
@@ -410,108 +450,93 @@ def train_offline(config_file, train_set, test_set):
     #main loop
     ######
 
-    for conf in tqdm(train_set):
+    #for conf in tqdm(train_set):
+    for i, conf in enumerate(train_set):
+        print(i)
 
-        flare_conf = ase2flare(struct, species_code, isolated_energies) #or FLARE_Atoms.from_ase_atoms()?
+        #where do we put the isolated atom energy?
+
+        flare_conf      = FLARE_Atoms.from_ase_atoms(conf, copy_calc_results=True)#FLARE_Atoms.from_ase_atoms(conf)#ase2flare(struct, species_code, isolated_energies) #or FLARE_Atoms.from_ase_atoms()?
+        flare_conf.calc = flare_calc
+
+        #get DFT data in the proper format
+        dft_energy = conf.get_potential_energy()
+        dft_forces = conf.get_forces()
+        dft_stress = conf.get_stress()
+
+        # Convert ASE stress (xx, yy, zz, yz, xz, xy) to FLARE stress
+        # (xx, xy, xz, yy, yz, zz).
+        flare_stress = None
+        if dft_stress is not None:
+            flare_stress = -np.array(
+                [
+                    dft_stress[0],
+                    dft_stress[5],
+                    dft_stress[4],
+                    dft_stress[1],
+                    dft_stress[3],
+                    dft_stress[2],
+                ]
+            )
+        
+        #
+
+        sgp = flare_calc.gp_model#.sparse_gp
 
         #initial step
         if step==0:
-            
-            gp_model.add_training_structure(flare_struct)
+        
+            #choose at random the indices for sgp initialization
             indices = np.random.choice(len(conf), nr_initial_envs, replace=False)
-            nsparse += nr_initial_envs
-            gp_model.add_specific_environments(flare_struct, indices)
-            gp_model.update_matrices_QR()
-            log_errors(gp_model,testsets)
-            sparse_indices.append(indices.tolist())
-            structdict=ase2dict(struct)
-            training_structures.append(structdict)
-            file_log.write("First step taken\n")
-            file_log.write("Added environments: \n")
-            file_log.write(np.array2string(indices))
-            file_log.write('\n')
-            file_log.flush()
-            gp_model.precompute_KnK()
-            neglik,_= compute_negative_likelihood_grad_stable(gp_model.hyperparameters, gp_model, precomputed=False) #why precomputed=False?
-            log_errors(gp_model,testsets)
-            file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
-            file_hyps.write(f"{step}\t{' '.join(map(str, gp_model.hyperparameters))}\t{neglik}\n")
+            sgp.update_db(flare_conf, forces=dft_forces, energy=dft_energy, stress=flare_stress, custom_range=indices)
             step+=1
             continue
-    
-        else:
-            gp_model.predict_local_uncertainties(flare_struct)
-            sigma = gp_model.hyperparameters[0]
-            uncs= np.array(flare_struct.local_uncertainties)[0]
-            uncs= np.sqrt(np.abs(uncs))/np.abs(sigma) # Rooted, unitless "std dev", consistent with flare-otf. Take abs because for numerical instabilities, some can be negative
-            if np.max(uncs) > call_threshold :
-                oracle_calls += 1
-                indices = np.where(uncs > add_threshold)[0]
-                if len(indices):
-                    gp_model.add_training_structure(flare_struct)
-                    gp_model.add_specific_environments(flare_struct, indices)
-                    file_log.write("Avg. en, largest force:\n")
-                    file_log.write(f"{poten}\t{np.array2string(maxfrc)}\n")
-                    file_log.write("Added environments: \n")
-                    file_log.write(np.array2string(indices))
-                    file_log.write('\n')
-                    file_log.write("Uncertainties: \n")
-                    file_log.write(np.array2string(uncs[indices]))
-                    file_log.write('\n')
-                    file_log.flush()
-                    gp_model.update_matrices_QR()
-                    sparse_indices.append(indices.tolist())
-                    structdict=ase2dict(struct)
-                    training_structures.append(structdict)
-                    nsparse += len(indices)
-                    if oracle_calls < max_optimize and oracle_calls > min_optimize and (oracle_calls-min_optimize)%optimize_every == 0 :
-                        rollback = optimize_hyps(gp_model,**config["optimizer_options"])
-                        file_log.write(f"Attempting optimization for oracle call nr. {oracle_calls}")
-                        file_log.write('\n')
-                        file_log.flush()
-                        if rollback: #Optimization failed
-                            if config["when_rollback"] == "discard" : #Rollback hyps AND trainset
-                                oracle_calls -= 1
-                                nsparse -= len(indices)
-                                del training_structures[-1]
-                                del sparse_indices[-1]
-                                modelstruct = [config["gp_config"]["power"],
-                                    config["gp_config"]["nspecies"],
-                                    config["gp_config"]["nmax"],
-                                    config["gp_config"]["lmax"],
-                                    config["gp_config"]["cutoff"]]
-                                gp_model,descriptors,kernels = model_from_dict(training_structures, sparse_indices, species_code,gp_model.hyperparameters,modelstruct)
-                            # Hyps are rolled back automatically
-                            # So here we just communicate that we failed
-                            file_log.write("Model NOT updated. New (old) hyps : \n")
-                            file_log.write('\n')
-                            file_log.write(str(gp_model.hyperparameters)+'\n')
-                            file_log.write("Mode was "+config["when_rollback"]+'\n')
-                        else: # Model updated correctly
-                            file_log.write("Model updated. New hyps : \n")
-                            file_log.write('\n')
-                            file_log.write(str(gp_model.hyperparameters)+'\n')
-                            file_log.flush()
-                            last_optim = step
-                            neglik,_= compute_negative_likelihood_grad_stable(gp_model.hyperparameters, gp_model, precomputed=False)
-                            file_hyps.write(f"{step}\t{' '.join(map(str, gp_model.hyperparameters))}\t{neglik}\n")
-                        file_hyps.flush()
-                    gp_model.update_matrices_QR()
-                    gp_model.precompute_KnK()
-                    neglik,_= compute_negative_likelihood_grad_stable(gp_model.hyperparameters, gp_model, precomputed=False)
-                    log_errors(gp_model,testsets)
-                    file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
-                    ntrstructs = len(gp_model.training_structures)
-                    file_log.write(f"Nr. of training structures is now: {ntrstructs}\n")
-                    file_lik.flush()
-                    file_log.flush()
 
-        gp_model.update_matrices_QR()
-        step+=1
+        else:
+
+            #compute uncertainties
+            flare_conf.calc.calculate(atoms=conf, properties='stds')
+            stds = flare_conf.calc.results.get("stds", np.zeros_like(dft_forces))
+            
+            if np.max(stds)>call_threshold:
+                oracle_calls +=1
+
+                #get high uncertainty configs
+                indices = np.where(stds>add_threshold)[0]
+                sgp.update_db(flare_conf, forces=dft_forces, energy=dft_energy, stress=flare_stress, custom_range=indices)
+
+                print(indices)
+
+                if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
+
+                    print("optimizing...")
+                    #train hyperparameters
+                    rollback = optimize_hyps(sgp.sparse_gp, **config["optimizer_options"])
+
+                    if rollback: #optimization failed
+                        print('optimization failed')
+                        if config["when_rollback"] == "discard":
+                            #create an sgp with all configs up until this one
+                            print('discard style rollback is not yet implemented')
+                            pass
+                        pass
+                    else:
+                        pass #all ok
+
+                        #del training_structures[-1]
+                else:
+                    pass
+
+            step += 1
+
+        #neglik,_= compute_negative_likelihood_grad_stable(sgp.sparse_gp.hyperparameters, sgp.sparse_gp, precomputed=False) #why precomputed=False?    
 
     ########
     #end of main loop
     ########
+
+    #build map - only here?
+    flare_calc.build_map()
 
     now = datetime.now()
     file_log.write(" * * * * * * * \n")
@@ -523,3 +548,16 @@ def train_offline(config_file, train_set, test_set):
     file_lik.close()
     file_maes_e.close()
     file_maes_f.close()
+
+
+if __name__=='__main__':
+
+    config_file = sys.argv[1]
+    config = yaml.safe_load(open(config_file,'r'))
+
+    train, test, _ = make_random_sets(config['files'], verbose=True)
+
+    train_offline(config, train, test)
+
+    write('train.xyz', train)
+    write('test.xyz', test)

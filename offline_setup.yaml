@@ -1,0 +1,77 @@
+files_prefix : "test"
+call_threshold : 0.01
+add_threshold : 0.001
+
+species_code : 
+    "29" : 0
+isolated_energies : 
+  "29" :  -1661.4439420703893
+isolated_energies_mapped:
+  "0" :  -1661.4439420703893
+
+seed : 1231  # Seed for rearranging singular datasets and choosing train configs
+when_rollback : "discard" # or accept. Decides what happens when hyps optim fail. If "discard", both training set and hyps are reset to before the frame. If "accept" , only reset GPs.
+nr_initial_envs : 20 # The number of environments chosen randomly from the first configuration to bootstrap the offline learning
+
+optimize_every : 2 # Every how many oracle calls optimization of hyps is performed - e.g. every 2,3 etc...
+min_optimize: 1
+max_optimize: 50
+
+# Set up FLARE calculator with (sparse) Gaussian process
+flare_calc:
+    gp: SGP_Wrapper
+    kernels:
+        - name: NormalizedDotProduct
+          sigma: 2.0
+          power: 2
+    descriptors:
+        - name: B2
+          nmax: 8
+          lmax: 4
+          cutoff_function: quadratic
+          radial_basis: chebyshev
+    energy_noise: 0.01
+    forces_noise: 0.05
+    stress_noise: 0.005
+    species:
+        - 29
+    single_atom_energies:
+        - -1661.4439420703893
+    cutoff: 4.9
+    variance_type: local
+    max_iterations: 5
+    use_mapping: True
+    energy_training: True
+    force_training: True
+    stress_training: True
+
+optimizer_options:
+  loss_function_config:
+    name : "negative_likelihood" # Which loss function to use, "negative_likelihood" or "huber"
+    weights :  # if "huber", you need to specify weight for energy forces and stresses
+      - 1.
+      - 0.1
+      - 0
+  opt_method: "L-BFGS-B"
+  gtol : 1.0e-3
+  bounds : "None"
+  max_iterations : 100
+  minhyps : #If hyps go below this, rollback
+    - 0.
+    - 0. 
+    - 0.
+    - 0.
+  maxhyps : #If hyps go above this, rollback
+    - 4. 
+    - 0.4
+    - 0.15
+    - 0.01
+
+
+#just for testing
+files:
+  - "/Users/ginardi/Desktop/science/active-learning/45Ry/111/otf111_dft.xyz"
+  - "/Users/ginardi/Desktop/science/active-learning/45Ry/110/otf110_dft.xyz"
+  - "/Users/ginardi/Desktop/science/active-learning/45Ry/100/otf100_dft.xyz"
+#this type of structure in yaml makes a list in python
+

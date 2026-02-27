@@ -10,7 +10,7 @@ Bulk_modulus : 167.7
 110_surface_energy : 1.77
 100_surface_energy : 1.69
 
-test_set_file : 'testset.xyz'
+test_set_file : 'test.xyz'
 
 calculator : "flare_lammps" #mace, flare, flare_lammps(recommended), nequip, eam_lammps are or will be implemented
 model_file : "lmp.flare" #model weights or general model file.
