@@ -200,22 +200,22 @@ def optimize_hyps(gp_model,
 
     return rollback
 
-def write_to_json(gp_model,power,radial_basis_type,
-                  cutoff_function,cutoff,nspecies,nmax,lmax,
-                  opt_method,variance_type,max_iterations,
+def write_to_json(gp_model, power, radial_basis_type,
+                  cutoff_function, cutoff, nspecies, nmax, lmax,
+                  opt_method, variance_type, max_iterations,
                   minhyps, maxhyps,bounds,
                   sigma_e,sigma_f,sigma_s,sigma,
-                  isolated_energies_mapped,descriptor_type,gtol,loss_function_config):
+                  isolated_energies_mapped, descriptor_type, gtol, loss_function_config, author='user'):
     """
     Returns a JSON of the model including all necessary data to retrain it.
     It also produces the maps of the model
     """
     hyperlist=np.array(gp_model.hyperparameters).tolist()
     #log_errors(gp_model,testsets)
-    gp_model.write_mapping_coefficients(f"{files_prefix}_coeffs.dat","davide",0)
-    gp_model.write_sparse_descriptors(f"{files_prefix}_sparse_desc.dat","davide")
-    gp_model.write_L_inverse(f"{files_prefix}_inv.dat","davide")
-    gpmodeldict = dict({"sparse_indice": [sparse_indices], "training_structures": training_structures})
+    gp_model.write_mapping_coefficients(f"lmp.flare",author,0)
+    gp_model.write_sparse_descriptors(f"sparse_desc_lmp.flare",author)
+    gp_model.write_L_inverse(f"L_inv_lmp.flare",author)
+    gpmodeldict = dict({"sparse_indices": [sparse_indices], "training_structures": training_structures})
     gpmodeldict["cutoff"] = cutoff
     gpmodeldict["species_map"] = species_code
     gpmodeldict["variance_type"] = variance_type
@@ -269,7 +269,7 @@ def initialize_gp(
     return gp_model_init, descriptors, kernels
 
 
-def model_from_dict(structuresdict,sparse_indices,species_code,hyps,modelstruct):
+def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstruct):
     """
     Retrain a gp model from a dictionary
     """
@@ -388,7 +388,8 @@ def huber_loss(hyperparameters,gp_model,weights):
 def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
-    #config = yaml.safe_load(open(config_file,'r'))
+    #add write to json
+    #make better use of logging, export data such as which sparse env you are selecting
 
     #use function from flare package
     #set stress_training in the config file, eventually
@@ -535,8 +536,9 @@ def train_offline(config, train_set, test_set):
     #end of main loop
     ########
 
-    #build map - only here?
+    #build map and write model - only here?
     flare_calc.build_map()
+    flare_calc.write_gp()
 
     now = datetime.now()
     file_log.write(" * * * * * * * \n")
