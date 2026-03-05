@@ -7,6 +7,7 @@ import numpy as np
 import sys
 import time
 from flare.bffs.sgp.calculator import SGP_Calculator
+from flare.bffs.gp.calculator import FLARE_Calculator
 from flare.bffs.sgp._C_flare import   B2, NormalizedDotProduct, SparseGP, Structure
 from flare.bffs.sgp import SGP_Wrapper
 from flare.learners.otf import OTF
@@ -551,6 +552,26 @@ def train_offline(config, train_set, test_set):
     file_maes_e.close()
     file_maes_f.close()
 
+    return
+
+def model_from_dict(json_dict_file):
+    #from flare.learners.OTF class
+    flare_calc_dict = json.load(open(json_dict_file["flare_calc"]))
+
+    # Build FLARE_Calculator from dict
+    if flare_calc_dict["class"] == "FLARE_Calculator":
+        flare_calc = FLARE_Calculator.from_file(json_dict_file)
+        _kernels = None
+        # Build SGP_Calculator from dict
+        # TODO: we still have the issue that the c++ kernel needs to be
+        # in the current space, otherwise there is Seg Fault
+        # That's why there is the _kernels
+    elif flare_calc_dict["class"] == "SGP_Calculator":
+        flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    else:
+        raise TypeError(f"The calculator {json_dict_file} is not recognized.")
+
+    return flare_calc, _kernels
 
 if __name__=='__main__':
 
