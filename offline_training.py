@@ -386,6 +386,35 @@ def huber_loss(hyperparameters,gp_model,weights):
 
     return loss
 
+
+def get_dft_data(conf):
+    """"
+    get data in the right format for flare training from an ase atoms object
+    """
+
+    #get DFT data in the proper format
+    dft_energy = conf.get_potential_energy()
+    dft_forces = conf.get_forces()
+    dft_stress = conf.get_stress()
+
+    # Convert ASE stress (xx, yy, zz, yz, xz, xy) to FLARE stress
+    # (xx, xy, xz, yy, yz, zz).
+    flare_stress = None
+    if dft_stress is not None:
+        flare_stress = -np.array(
+            [
+                dft_stress[0],
+                dft_stress[5],
+                dft_stress[4],
+                dft_stress[1],
+                dft_stress[3],
+                dft_stress[2],
+            ]
+        )
+
+    return dft_energy, dft_forces, flare_stress
+
+
 def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
@@ -414,7 +443,7 @@ def train_offline(config, train_set, test_set):
     sparse_indices      = []
     training_structures = []
 
-    oracle_calls = 0
+    oracle_calls = 1
     nsparse      = 0
     last_optim   = 0
     step         = 0
@@ -454,35 +483,14 @@ def train_offline(config, train_set, test_set):
 
     #for conf in tqdm(train_set):
     for i, conf in enumerate(train_set):
-        print(i)
+        print(f'step {i}')
 
         #where do we put the isolated atom energy?
 
         flare_conf      = FLARE_Atoms.from_ase_atoms(conf, copy_calc_results=True)#FLARE_Atoms.from_ase_atoms(conf)#ase2flare(struct, species_code, isolated_energies) #or FLARE_Atoms.from_ase_atoms()?
         flare_conf.calc = flare_calc
 
-        #get DFT data in the proper format
-        dft_energy = conf.get_potential_energy()
-        dft_forces = conf.get_forces()
-        dft_stress = conf.get_stress()
-
-        # Convert ASE stress (xx, yy, zz, yz, xz, xy) to FLARE stress
-        # (xx, xy, xz, yy, yz, zz).
-        flare_stress = None
-        if dft_stress is not None:
-            flare_stress = -np.array(
-                [
-                    dft_stress[0],
-                    dft_stress[5],
-                    dft_stress[4],
-                    dft_stress[1],
-                    dft_stress[3],
-                    dft_stress[2],
-                ]
-            )
-        
-        #
-
+        energy, forces, stress = get_dft_data(conf)
         sgp = flare_calc.gp_model#.sparse_gp
 
         #initial step
@@ -490,7 +498,7 @@ def train_offline(config, train_set, test_set):
         
             #choose at random the indices for sgp initialization
             indices = np.random.choice(len(conf), nr_initial_envs, replace=False)
-            sgp.update_db(flare_conf, forces=dft_forces, energy=dft_energy, stress=flare_stress, custom_range=indices)
+            sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices)
             step+=1
             continue
 
@@ -498,16 +506,16 @@ def train_offline(config, train_set, test_set):
 
             #compute uncertainties
             flare_conf.calc.calculate(atoms=conf, properties='stds')
-            stds = flare_conf.calc.results.get("stds", np.zeros_like(dft_forces))
+            stds = flare_conf.calc.results.get("stds", np.zeros_like(forces))
             
             if np.max(stds)>call_threshold:
                 oracle_calls +=1
 
                 #get high uncertainty configs
                 indices = np.where(stds>add_threshold)[0]
-                sgp.update_db(flare_conf, forces=dft_forces, energy=dft_energy, stress=flare_stress, custom_range=indices)
+                sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices)
 
-                print(indices)
+                #print(indices)
 
                 if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
 
@@ -556,21 +564,25 @@ def train_offline(config, train_set, test_set):
 
 def model_from_dict(json_dict_file):
     #from flare.learners.OTF class
-    flare_calc_dict = json.load(open(json_dict_file["flare_calc"]))
+    #flare_calc_dict = json.load(open(json_dict_file))["flare_calc"]
 
     # Build FLARE_Calculator from dict
-    if flare_calc_dict["class"] == "FLARE_Calculator":
-        flare_calc = FLARE_Calculator.from_file(json_dict_file)
-        _kernels = None
-        # Build SGP_Calculator from dict
-        # TODO: we still have the issue that the c++ kernel needs to be
-        # in the current space, otherwise there is Seg Fault
-        # That's why there is the _kernels
-    elif flare_calc_dict["class"] == "SGP_Calculator":
-        flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
-    else:
-        raise TypeError(f"The calculator {json_dict_file} is not recognized.")
+    #if flare_calc_dict["class"] == "FLARE_Calculator":
+    #     flare_calc = FLARE_Calculator.from_file(json_dict_file)
+    #     _kernels = None
+    #     # Build SGP_Calculator from dict
+    #     # TODO: we still have the issue that the c++ kernel needs to be
+    #     # in the current space, otherwise there is Seg Fault
+    #     # That's why there is the _kernels
+    # elif flare_calc_dict["class"] == "SGP_Calculator":
+    #     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    # else:
+    #     raise TypeError(f"The calculator {json_dict_file} is not recognized.")
 
+
+    #todo: generalize
+
+    flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
     return flare_calc, _kernels
 
 if __name__=='__main__':
