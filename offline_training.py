@@ -30,6 +30,7 @@ from datetime import datetime
 from scipy.special import huber
 from makesets import make_random_sets
 from copy import deepcopy
+from benchmark import mae_mav_test
 
 try:
     from tqdm import tqdm
@@ -41,7 +42,7 @@ except:
 
 
 
-def ase2flare(struct, config):
+def ase2flare(struct, config, descriptors):
     """
     Takes an ASE structure and returns a FLARE structure object
     """
@@ -57,6 +58,7 @@ def ase2flare(struct, config):
         eisol += isolated_energies[str(spec)]
     cell = struct.cell.array
     pos = struct.positions
+    cutoff = config["flare_calc"]["cutoff"]
     flare_struct = Structure(cell, list(coded_species), pos, cutoff, descriptors)
     flare_struct.wrap_positions()
     if "forces" in struct.arrays:
@@ -103,18 +105,18 @@ def check_mae(gp_model, train_struct):
     force_components_errors = (train_struct.forces - train_struct.mean_efs[1:-6]).tolist()
     return energy_error, np.array(force_components_errors)
 
-def log_errors(gp_model,testsets):
+def log_errors(gp_model, testsets):
     """
     Measures the error incurred by the potential on a collection of testsets (made of FLARE structures)
     """
     file_maes_e.write(f"{step}\t")
     file_maes_f.write(f"{step}\t")
     for testset in testsets:
-        enerrs,fcerrs = np.empty(0),np.empty(0)
+        enerrs, fcerrs = np.empty(0), np.empty(0)
         for test_struct in testset:
-            enerr, fcerr= check_mae(gp_model,test_struct)
-            enerrs  = np.concatenate((enerrs,enerr))
-            fcerrs  = np.concatenate((fcerrs,fcerr))
+            enerr, fcerr = check_mae(gp_model, test_struct)
+            enerrs  = np.concatenate((enerrs, enerr))
+            fcerrs  = np.concatenate((fcerrs, fcerr))
         mae_e = np.mean(np.abs(enerrs))
         mae_f = np.mean(np.abs(fcerrs))
         file_maes_e.write(f"{mae_e:.5f}\t")
@@ -124,6 +126,19 @@ def log_errors(gp_model,testsets):
     file_maes_e.flush()
     file_maes_f.flush()
     return
+
+#TODO: REFINE
+def log_errors_gibo(errors, file_maes_e, file_maes_f, step):
+    #only one test set here
+    str_e = f"{step}\t{errors[0]['test.xyz']['energy_per_atom']['mae']}\n"
+    str_f = f"{step}\t{errors[0]['test.xyz']['forces']['mae']}\n"
+    file_maes_e.write(str_e)
+    file_maes_f.write(str_f)
+    file_maes_e.flush()
+    file_maes_f.flush()
+
+    return
+
 
 def compute_negative_likelihood_grad_stable(
     hyperparameters, sparse_gp, precomputed=False):
@@ -316,7 +331,7 @@ def ase2dict(struct: Atoms) -> dict :
         "pbc"      : struct.pbc.tolist(),
         "info"     : dict({'rel_efs_noise': [1, 1, 1]}),
         "results"  : dict({"forces": struct.arrays["forces"].tolist() if "forces" in struct.arrays else struct.get_forces().tolist() , "energy" : [struct.calc.get_potential_energy().tolist()], "stresses": struct.get_stress().tolist() ,
-            "stds": [ [0.,0.,0.] for _ in range(noa)], "local_energy_stds" : [ 0. for _ in range(noa)] , "stress_stds" : [0. for _ in range(6)]})
+            "stds": [ [0.,0.,0.] for _ in range(len(struct))], "local_energy_stds" : [ 0. for _ in range(len(struct))] , "stress_stds" : [0. for _ in range(6)]})
         })
     return structdict
 
@@ -472,6 +487,10 @@ def train_offline(config, train_set, test_set):
     file_maes_e.write("# Begin here\n")
     file_maes_f.write("# Begin here\n")
 
+    #TODO: for backwards compatibility
+    #test_set_flare_struc = [ ase2flare() for a in test_set]
+
+
 
     #start training
     print("Training...")
@@ -483,9 +502,7 @@ def train_offline(config, train_set, test_set):
 
     #for conf in tqdm(train_set):
     for i, conf in enumerate(train_set):
-        print(f'step {i}')
-
-        #where do we put the isolated atom energy?
+        file_log.write(f"   - Frame nr {step} \n")
 
         flare_conf      = FLARE_Atoms.from_ase_atoms(conf, copy_calc_results=True)#FLARE_Atoms.from_ase_atoms(conf)#ase2flare(struct, species_code, isolated_energies) #or FLARE_Atoms.from_ase_atoms()?
         flare_conf.calc = flare_calc
@@ -499,6 +516,16 @@ def train_offline(config, train_set, test_set):
             #choose at random the indices for sgp initialization
             indices = np.random.choice(len(conf), nr_initial_envs, replace=False)
             sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices)
+    
+            #log / store info
+            nsparse += nr_initial_envs
+            sparse_indices.append(indices.tolist())
+            conf.info["sparse_set"] = np.array(indices)
+            training_structures.append(conf)
+            file_log.write('initialized gp with radnom enviornments: atoms' + np.array2string(indices) + '\n')
+            file_log.flush()
+
+            #end first step
             step+=1
             continue
 
@@ -513,33 +540,50 @@ def train_offline(config, train_set, test_set):
 
                 #get high uncertainty configs
                 indices = np.where(stds>add_threshold)[0]
-                sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices)
+                sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #differnt from davide, but as in flare-otf. Could it be differnt for the full set?
 
-                #print(indices)
+                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds[indices]) +'\n')
+                sparse_indices.append(indices.tolist())
+                nsparse += len(indices)
+                conf.info["sparse_set"] = np.array(indices)
+                training_structures.append(conf)
 
                 if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
 
-                    print("optimizing...")
+                    file_log.write(f"optimizing call #{oracle_calls}...")
                     #train hyperparameters
                     rollback = optimize_hyps(sgp.sparse_gp, **config["optimizer_options"])
 
                     if rollback: #optimization failed
-                        print('optimization failed')
+                        file_log.write('optimization failed. Currently only accept style rollback is implemented.\n')
                         if config["when_rollback"] == "discard":
                             #create an sgp with all configs up until this one
                             print('discard style rollback is not yet implemented')
                             pass
                         pass
                     else:
-                        pass #all ok
+                        file_hyps.write(f"{step}\t{' '.join(map(str, sgp.sparse_gp.hyperparameters))}\n")
+                        file_hyps.flush()
+                        #all ok
 
                         #del training_structures[-1]
                 else:
                     pass
 
-            step += 1
+                neglik,_= compute_negative_likelihood_grad_stable(sgp.sparse_gp.hyperparameters, sgp.sparse_gp, precomputed=False)
 
-        #neglik,_= compute_negative_likelihood_grad_stable(sgp.sparse_gp.hyperparameters, sgp.sparse_gp, precomputed=False) #why precomputed=False?    
+                #log_errors(sgp.sparse_gp, test_set) TODO - for backwards compatibility
+                #check errors for the learning curve
+                errors = mae_mav_test(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False)
+                log_errors_gibo(errors, file_maes_e, file_maes_f, step)
+
+                file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
+                file_lik.flush()
+
+                file_log.flush()
+
+
+            step += 1
 
     ########
     #end of main loop
@@ -547,8 +591,11 @@ def train_offline(config, train_set, test_set):
 
     #build map and write model - only here?
     flare_calc.build_map()
-    flare_calc.write_gp()
+    flare_calc.write_model(config['files_prefix']+'_model.json')
 
+    write('added_structres.xyz', training_structures)
+
+    #end logging
     now = datetime.now()
     file_log.write(" * * * * * * * \n")
     file_log.write(f"Execution ended at {now.strftime(dateformat)}\n")
