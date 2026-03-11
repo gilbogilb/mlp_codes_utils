@@ -18,4 +18,5 @@ model_file : "lmp.flare" #model weights or general model file.
 compute_excess_energy : False
 compute_performance : False
 
+special_configs_folder : './' #optional, deafult to /.
 special_configs : [] #particular configs you want to predict on and compute percentage difference wrt your reference method

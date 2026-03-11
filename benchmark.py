@@ -7,6 +7,7 @@
 import yaml
 import numpy as np
 import sys
+from pathlib import Path
 
 from ase import Atoms
 from ase.units import kJ, fs
@@ -585,7 +586,8 @@ def predict_configs(calc, e_iso_ref, files_to_predict):
 
     for f in files_to_predict:
 
-        results[f] = {}
+        dict_key = Path(f).name
+        results[dict_key] = {}
         atoms = read(f)
         
         ref_energy = float(atoms.get_potential_energy() - len(atoms)*e_iso_ref)
@@ -607,9 +609,9 @@ def predict_configs(calc, e_iso_ref, files_to_predict):
         print(f'model energy {model_energy}; ref energy {ref_energy}')
 
         difference = perc_diff(ref_energy, model_energy)
-        results[f]['energy'] = model_energy
-        results[f]['perc_diff'] = difference
-        results[f]['energy_per_atom_error'] = (model_energy-ref_energy)/len(atoms)
+        results[dict_key]['energy'] = model_energy
+        results[dict_key]['perc_diff'] = difference
+        results[dict_key]['energy_per_atom_error'] = (model_energy-ref_energy)/len(atoms)
 
     return results
 
@@ -700,8 +702,10 @@ def main(config):
 
     #try computing special configurations (if present)
     files_to_predict_on = setup.get('special_configs',[])
+    files_to_predict_folder = setup.get('special_configs_folder','./')
+    files_to_predict_full = [files_to_predict_folder+file for file in files_to_predict_on]
     if files_to_predict_on:
-        results = predict_configs(calc, E_iso, files_to_predict_on)
+        results = predict_configs(calc, E_iso, files_to_predict_full)
         properties['special_configs'] = {}
         properties['special_configs'].update(results)
     
