@@ -554,9 +554,6 @@ def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, oct
 
     return
 
-def perc_diff(reference, value):
-    return (value-reference)/reference*100.
-
 def MD_performance(atoms, calc, steps=1000, temperature_K=1000):
     """
     Run a few MD steps to compute the performance (katom step/s) (NB on one processor with ASE).
@@ -575,17 +572,54 @@ def MD_performance(atoms, calc, steps=1000, temperature_K=1000):
 
     return len(atoms)*steps/run_time
 
+def perc_diff(reference, value):
+    return (value-reference)/reference*100.
 
-if __name__ == '__main__':
+def predict_configs(calc, e_iso_ref, files_to_predict):
+    """
+    use calc to predict on configurations read from files. Notice: only the last config from each file is read and used for testing prediction.
+    Only comparing energies for now. returning a dictionary that can be appended to the produced benchmark file
+    """
 
-    if len(sys.argv)<1:
-        print('usage:',sys.argv[0],' <setup_file>')
+    results = {}
+
+    for f in files_to_predict:
+
+        results[f] = {}
+        atoms = read(f)
+        
+        ref_energy = float(atoms.get_potential_energy() - len(atoms)*e_iso_ref)
+        # ref_forces = atoms.get_forces()
+        # try:
+        #     ref_stress = atoms.get_stress()
+        # except:
+        #     print(f'could not get reference stress for config in file {f}')
+
+        atoms.calc = calc
+
+        symbol = atoms.get_chemical_symbols()[0]
+        iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        e_iso_model = iso_atom.get_potential_energy()
+
+        model_energy = float(atoms.get_potential_energy() - len(atoms)*e_iso_model)
+        print(f'model energy {model_energy}; ref energy {ref_energy}')
+
+        difference = perc_diff(ref_energy, model_energy)
+        results[f]['energy'] = model_energy
+        results[f]['perc_diff'] = difference
+        results[f]['energy_per_atom_error'] = (model_energy-ref_energy)/len(atoms)
+
+    return results
+
+
+def main(config):
 
     #load config.yml settings 
     with open(sys.argv[1],'r') as f:
         setup = yaml.safe_load(f)
     
-
     #get ab-initio data and physical system data
     #chemical symbol - single specie only (for now)
     symbol = setup['symbol']
@@ -664,6 +698,18 @@ if __name__ == '__main__':
     for dic in results:
         properties.update(dic)
 
+    #try computing special configurations (if present)
+    files_to_predict_on = setup.get('special_configs',[])
+    if files_to_predict_on:
+        results = predict_configs(calc, E_iso, files_to_predict_on)
+        properties['special_configs'] = {}
+        properties['special_configs'].update(results)
+    
+    #save to file
+    f = open(setup["calculator"]+"_benchmark.yaml",'w')
+    yaml.dump(properties, f)
+    f.close()
+
     #COMPUTE MD Computational PERFORMANCE
     if compute_performance:
         print('computing performance')
@@ -671,11 +717,6 @@ if __name__ == '__main__':
         properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=500)
 
     print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
-
-    #save to file
-    f = open(setup["calculator"]+"_benchmark.yaml",'w')
-    yaml.dump(properties, f)
-    f.close()
 
     #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
     print('computing distant atom curves')
@@ -701,5 +742,14 @@ if __name__ == '__main__':
     if compute_excess_energy:
         print('computing excess energies')
         clusters_excess_energy(symbol,calc, properties['fcc_bulk']['a0'], properties['fcc_bulk']['e0'], max_size=500)
+
+
+
+if __name__ == '__main__':
+
+    if len(sys.argv)<1:
+        print('usage:',sys.argv[0],' <setup_file>')
+
+    main(sys.argv[1])
 
     print("Done.")
