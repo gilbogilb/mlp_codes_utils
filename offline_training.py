@@ -30,7 +30,7 @@ from datetime import datetime
 from scipy.special import huber
 from makesets import make_random_sets
 from copy import deepcopy
-from benchmark import mae_mav_test
+from benchmark import compute_test_errors
 
 try:
     from tqdm import tqdm
@@ -574,7 +574,7 @@ def train_offline(config, train_set, test_set):
 
                 #log_errors(sgp.sparse_gp, test_set) TODO - for backwards compatibility
                 #check errors for the learning curve
-                errors = mae_mav_test(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False)
+                errors = compute_test_errors(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False)
                 log_errors_gibo(errors, file_maes_e, file_maes_f, step)
 
                 file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
@@ -591,9 +591,9 @@ def train_offline(config, train_set, test_set):
 
     #build map and write model - only here?
     flare_calc.build_map()
-    flare_calc.write_model(config['files_prefix']+'_model.json')
+    flare_calc.write_model(config['files_prefix']+'_model.json') #this way is missing some stuff? like results? could have to be fixed
 
-    write('added_structres.xyz', training_structures)
+    write('added_structures.xyz', training_structures)
 
     #end logging
     now = datetime.now()
