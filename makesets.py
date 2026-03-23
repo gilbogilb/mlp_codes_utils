@@ -149,32 +149,30 @@ def sort_by_gcn(set, cutoff, pbc=True):
     
     ids = np.argsort(gcn_sds)
     gcn_sds = gcn_sds[ids]
-    sorted = [set[i] for i in ids]
+    sorted_frames = [set[i] for i in ids]
 
-    return sorted, gcn_sds, ids
+    return sorted_frames, gcn_sds, ids
 
-def sort_by_cnap_number(set, cutoff, pbc=True, keep_order=False):
+def sort_by_cnap_number(frames, cutoff, pbc=True, keep_order=False):
     """
-    sort by the number of common neighbours analysis patterns in the config.
-    By default, configs with the same number of cnaps are shuffled, but this can be avoided with keep_order 
+    sort by the number of distinct cnaps normalized by the number of atoms in the system.
     """
-
-    from snow.descriptors.cna import cna_peratom, cnap_peratom #test with cnap_peratom auto recognition
-
-    cnap_ratios = np.zeros(len(set))
     
-    for i, frame in enumerate(set):
-        cnas = cna_peratom(frame.get_postions, cutoff, pbc, box=frame.get_cell() )
+    from snow.descriptors.cna import cna_peratom, cnap_peratom
+
+    cnap_ratios = np.zeros(len(frames))  
+    
+    for i, frame in enumerate(frames):   
+        cnas = cna_peratom(frame.get_positions(), cutoff, pbc, box=frame.get_cell())
         patterns = [cna[0] for cna in cnas]
         patterns = [tuple(map(tuple, arr)) for arr in patterns]
-        n_unique = len(set(patterns))
-        cnap_ratios[i] = n_unique/len(frame)
+        n_unique = len(set(patterns))    
+        cnap_ratios[i] = n_unique / len(frame)
 
     ids    = np.argsort(cnap_ratios)
-    sorted = [frame[i] for i in ids]
+    sorted_frames = [frames[i] for i in ids]  
 
-
-    return sorted, cnap_ratios[ids], ids
+    return sorted_frames, cnap_ratios[ids], ids
 
 ###What's a good measure of disorder in atomistic configurations?
 
