@@ -132,13 +132,51 @@ def make_sparsely_injected_sets(files, files_for_injection, injection_frequency,
     return final_train_set, test_set, remaining_injections
 
 
+#some experimental utilities: sort configurations by how ordered they are (type 1: GCN stddev, type 2: CNAPs number)
+def sort_by_gcn(set, cutoff, pbc=False, box=None):
+    """
+    sort configs in set by increasing spread of the generalized coordination number of the atoms in the frames,
+    quantified as the standard deviation of the gcns
+    """
+    from snow.descriptors.coordination import agcn_calculator
 
+    gcn_sds = np.zeros(len(set))
 
+    for i, frame in enumerate(set):
+        _, gcns = agcn_calculator(frame.get_positions(), cutoff, pbc=pbc, box=box)
+        sd = np.std(gcns)
+        gcn_sds[i] = sd
     
+    ids = np.argsort(gcn_sds)
+    gcn_sds = gcn_sds[ids]
+    sorted = [set[i] for i in ids]
+
+    return sorted, gcn_sds, ids
+
+def sort_by_cnap_number(set, cutoff, pbc=False, box=None, keep_order=False):
+    """
+    sort by the number of common neighbours analysis patterns in the config.
+    By default, configs with the same number of cnaps are shuffled, but this can be avoided with keep_order 
+    """
+
+    from snow.descriptors.cna import cna_peratom, cnap_peratom #test with cnap_peratom auto recognition
+
+    cnap_ratios = np.zeros(len(set))
+    
+    for i, frame in enumerate(set):
+        cnas = cna_peratom(frame.get_postions, cutoff, pbc, box)
+        patterns = [cna[0] for cna in cnas]
+        patterns = [tuple(map(tuple, arr)) for arr in patterns]
+        n_unique = len(set(patterns))
+        cnap_ratios[i] = n_unique/len(frame)
+
+    ids    = np.argsort(cnap_ratios)
+    sorted = [frame[i] for i in ids]
 
 
+    return sorted, cnap_ratios[ids], ids
 
-
+###What's a good measure of disorder in atomistic configurations?
 
 
 if __name__ == '__main__':
