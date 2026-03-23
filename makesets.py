@@ -133,7 +133,7 @@ def make_sparsely_injected_sets(files, files_for_injection, injection_frequency,
 
 
 #some experimental utilities: sort configurations by how ordered they are (type 1: GCN stddev, type 2: CNAPs number)
-def sort_by_gcn(set, cutoff, pbc=False, box=None):
+def sort_by_gcn(set, cutoff, pbc=True):
     """
     sort configs in set by increasing spread of the generalized coordination number of the atoms in the frames,
     quantified as the standard deviation of the gcns
@@ -143,7 +143,7 @@ def sort_by_gcn(set, cutoff, pbc=False, box=None):
     gcn_sds = np.zeros(len(set))
 
     for i, frame in enumerate(set):
-        _, gcns = agcn_calculator(frame.get_positions(), cutoff, pbc=pbc, box=box)
+        _, gcns = agcn_calculator(frame.get_positions(), cutoff, pbc=pbc, box=frame.get_cell())
         sd = np.std(gcns)
         gcn_sds[i] = sd
     
@@ -153,7 +153,7 @@ def sort_by_gcn(set, cutoff, pbc=False, box=None):
 
     return sorted, gcn_sds, ids
 
-def sort_by_cnap_number(set, cutoff, pbc=False, box=None, keep_order=False):
+def sort_by_cnap_number(set, cutoff, pbc=True, keep_order=False):
     """
     sort by the number of common neighbours analysis patterns in the config.
     By default, configs with the same number of cnaps are shuffled, but this can be avoided with keep_order 
@@ -164,7 +164,7 @@ def sort_by_cnap_number(set, cutoff, pbc=False, box=None, keep_order=False):
     cnap_ratios = np.zeros(len(set))
     
     for i, frame in enumerate(set):
-        cnas = cna_peratom(frame.get_postions, cutoff, pbc, box)
+        cnas = cna_peratom(frame.get_postions, cutoff, pbc, box=frame.get_cell() )
         patterns = [cna[0] for cna in cnas]
         patterns = [tuple(map(tuple, arr)) for arr in patterns]
         n_unique = len(set(patterns))
