@@ -1,6 +1,6 @@
-files_prefix : "test"
-call_threshold : 0.01
-add_threshold : 0.001
+files_prefix : "cnaps_sorted"
+call_threshold : 0.001
+add_threshold : 0.0001
 
 species_code : 
     "29" : 0
@@ -9,20 +9,20 @@ isolated_energies :
 isolated_energies_mapped:
   "0" :  -1661.4439420703893
 
-seed : 1231  # Seed for rearranging singular datasets and choosing train configs
+seed : 123  # Seed for rearranging singular datasets and choosing train configs
 when_rollback : "discard" # or accept. Decides what happens when hyps optim fail. If "discard", both training set and hyps are reset to before the frame. If "accept" , only reset GPs.
-nr_initial_envs : 20 # The number of environments chosen randomly from the first configuration to bootstrap the offline learning
+nr_initial_envs : 5 # The number of environments chosen randomly from the first configuration to bootstrap the offline learning
 
 optimize_every : 2 # Every how many oracle calls optimization of hyps is performed - e.g. every 2,3 etc...
-min_optimize: 1
-max_optimize: 50
+min_optimize: 40
+max_optimize: 55
 
 # Set up FLARE calculator with (sparse) Gaussian process
 flare_calc:
     gp: SGP_Wrapper
     kernels:
         - name: NormalizedDotProduct
-          sigma: 2.0
+          sigma: 3.5
           power: 2
     descriptors:
         - name: B2
@@ -30,7 +30,7 @@ flare_calc:
           lmax: 4
           cutoff_function: quadratic
           radial_basis: chebyshev
-    energy_noise: 0.01
+    energy_noise: 0.1
     forces_noise: 0.05
     stress_noise: 0.005
     species:
@@ -39,7 +39,7 @@ flare_calc:
         - -1661.4439420703893
     cutoff: 4.9
     variance_type: local
-    max_iterations: 5
+#    max_iterations: 20
     use_mapping: True
     energy_training: True
     force_training: True
@@ -68,10 +68,29 @@ optimizer_options:
     - 0.01
 
 
-#just for testing
-files:
+bulk_files:
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/bulk.xyz"
+
+
+surf_files:
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/surf.xyz"
   - "/Users/ginardi/Desktop/science/active-learning/45Ry/111/otf111_dft.xyz"
   - "/Users/ginardi/Desktop/science/active-learning/45Ry/110/otf110_dft.xyz"
   - "/Users/ginardi/Desktop/science/active-learning/45Ry/100/otf100_dft.xyz"
-#this type of structure in yaml makes a list in python
 
+clusters_files:
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/clusters.xyz"
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/np-ads_all_dft_correction.xyz"
+#skipping refine-melting
+
+injection_files:
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/isomers_relaxations.xyz"
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-100.xyz"
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-111.xyz"
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-110.xyz"
+  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/ih147.xyz"
+
+train_file: 'cnaps_sorted_train.xyz'
+test_file: 'test.xyz'
+
+dataset_style:

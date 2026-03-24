@@ -28,7 +28,7 @@ from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 from datetime import datetime
 from scipy.special import huber
-from makesets import make_random_sets
+from makesets import *
 from copy import deepcopy
 from benchmark import compute_test_errors
 
@@ -632,14 +632,37 @@ def model_from_dict(json_dict_file):
     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
     return flare_calc, _kernels
 
+def main(config_file):
+
+    config_train = yaml.safe_load(open(sys.argv[1], 'r'))
+
+    if config_train["dataset_style"] == "injected":
+
+        files = config_train["bulk_files"] + config_train["surf_files"] + config_train["clusters_files"]
+        train, test, _ = make_sparsely_injected_sets(files, config_train["injection_files"], injection_frequency=4, stop_inject= 60, seed=config_train["seed"], shuffle_injections=True)
+
+    elif config_train["dataset_style"] == "random":
+
+        files = config_train["bulk_files"] + config_train["surf_files"] + config_train["clusters_files"] + config_train["injection_files"]
+        train, test, _ = make_random_sets(files, seed=config_train["seed"])
+
+    elif config_train["dataset_style"] == "ordered":
+
+        [train_b, train_s, train_c], [test_b, test_s, test_c], _ = make_sequential_sets(config_train["bulk_files"], config_train["surf_files"]+["/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-100.xyz", "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-110.xyz", "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-111.xyz" ], config_train["clusters_files"]+["/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/isomers_relaxations.xyz"], seed=config_train["seed"])
+
+        train = train_b + train_s + train_c
+        test  = test_b + test_s + test_c
+    
+    elif config_train['dataset_style'] == 'intact':
+        train = read(config_train['train_file'], index=':')
+        test  = read(config_train['test_file'], index=':')
+
+    if not config_train['dataset_style'] == 'intact':
+        write('train.xyz', train)
+        write('test.xyz', test)
+
+    train_offline(config_train, train, test)
+
 if __name__=='__main__':
 
-    config_file = sys.argv[1]
-    config = yaml.safe_load(open(config_file,'r'))
-
-    train, test, _ = make_random_sets(config['files'], verbose=True)
-
-    train_offline(config, train, test)
-
-    write('train.xyz', train)
-    write('test.xyz', test)
+    main(sys.argv[1])
