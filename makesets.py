@@ -6,6 +6,7 @@ from ase.io import read, write
 import random
 import sys
 import yaml
+from collections import Counter
 
 def make_random_sets(files, test_ratio=0.1, valid_ratio=0.0, seed=None, per_file_splitting=True, verbose=False):
     #per file splitting: split in test, train and validation for each file rather than at random from the full set of all provided configurations
@@ -131,8 +132,9 @@ def make_sparsely_injected_sets(files, files_for_injection, injection_frequency,
 
     return final_train_set, test_set, remaining_injections
 
-
+###What's a good measure of disorder in atomistic configurations?
 #some experimental utilities: sort configurations by how ordered they are (type 1: GCN stddev, type 2: CNAPs number)
+
 def sort_by_gcn(set, cutoff, pbc=True):
     """
     sort configs in set by increasing spread of the generalized coordination number of the atoms in the frames,
@@ -164,18 +166,23 @@ def sort_by_cnap_number(frames, cutoff, pbc=True, keep_order=False):
     
     for i, frame in enumerate(frames):   
         cnas = cna_peratom(frame.get_positions(), cutoff, pbc, box=frame.get_cell())
-        patterns = [cna[0] for cna in cnas]
-        patterns = [tuple(map(tuple, arr)) for arr in patterns]
-        n_unique = len(set(patterns))    
-        cnap_ratios[i] = n_unique / len(frame)
+        pattern_counter = Counter()
+
+        #expand signatures by their count and sort to get permutation invariance
+        for signs, counts in cnas:
+            expanded = []
+            for sig, cnt in zip(signs, counts):
+                expanded.extend([tuple(sig)] * cnt) #extend appends the tuples as single elements and avoids the creation of a nested list
+            
+            pattern = tuple(sorted(expanded)) #sort for perm invariance
+            pattern_counter[pattern] += 1
+
+        cnap_ratios[i] = len(pattern_counter) / len(frame)
 
     ids    = np.argsort(cnap_ratios)
     sorted_frames = [frames[i] for i in ids]  
 
     return sorted_frames, cnap_ratios[ids], ids
-
-###What's a good measure of disorder in atomistic configurations?
-
 
 if __name__ == '__main__':
 
