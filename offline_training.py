@@ -471,7 +471,7 @@ def train_offline(config, train_set, test_set):
 
     #log initial stuff
     file_log.write("You are running Offline Learner version 4-11-2025\n")
-    file_log.write("Author : Davide Alimonti + GN contributions, nanoMLMS @ University of Milan\n")
+    file_log.write("Author : Davide Alimonti + Gilberto Nardi, nanoMLMS @ University of Milan\n")
 
     dateformat = "%d/%m/%Y %H:%M:%S"
     now = datetime.now()
@@ -574,7 +574,7 @@ def train_offline(config, train_set, test_set):
 
                 #log_errors(sgp.sparse_gp, test_set) TODO - for backwards compatibility
                 #check errors for the learning curve
-                errors = compute_test_errors(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False)
+                errors = compute_test_errors(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False, tqdm_extra_string=f'step={step}')
                 log_errors_gibo(errors, file_maes_e, file_maes_f, step)
 
                 file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")

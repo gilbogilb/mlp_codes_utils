@@ -257,7 +257,7 @@ def dimer_curve(symbol, calc, npoints=40):
 
     return distances, energies
 
-def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='mae', out_folder='./'):
+def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='mae', out_folder='./', tqdm_extra_string=""):
 
     """
     Compute mae/mav on a test set. NB: energies are per atom.
@@ -311,7 +311,7 @@ def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='
         iso_atom.center(vacuum=10.0)
         E_iso_model   = iso_atom.get_potential_energy()
 
-        for itconf, conf in enumerate(tqdm(test_set, desc="computing model predictions and errors...")):
+        for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
 
             #store dft values
             e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
@@ -704,7 +704,7 @@ def main(config):
     dft110 = setup['110_surface_energy']
     dft100 = setup['100_surface_energy']
 
-    test_set_files=setup['test_set_file']
+    test_set_files=setup.get('test_set_file', None)
 
     #two optional longer tests
     compute_performance   = setup.get('compute_performance', False)
@@ -763,12 +763,13 @@ def main(config):
     properties['fcc100']['rel_error'] = g3_p        
 
     #MAE, MAV on test set
-    print('computing test set errors')
+    if test_set_files is not None:
+        print('computing test set errors')
 
-    results = compute_test_errors(calc, test_set_files, E_iso, err_method=err_method)
+        results = compute_test_errors(calc, test_set_files, E_iso, err_method=err_method)
 
-    for dic in results:
-        properties.update(dic)
+        for dic in results:
+            properties.update(dic)
 
     #try computing special configurations (if present)
     files_to_predict_on = setup.get('special_configs',[])

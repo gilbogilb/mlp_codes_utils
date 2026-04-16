@@ -185,6 +185,54 @@ def sort_by_cnap_number(frames, cutoff, pbc=True, keep_order=False):
 
     return sorted_frames, cnap_ratios[ids], ids
 
+
+def split_bulk_surf_clust(atoms):
+    """attempt separating different structures (bulk, surfaces, clusters) based
+    on the number density of atoms (generally three ranges are present)"""
+    bulk, surf, clust = [], [], []
+    densities = []
+    for a in atoms:
+        Vcell = a.get_cell().volume
+        N = float(len(a))
+        densities.append(N / Vcell)
+
+    # Find two thresholds using kmeans-style split on sorted densities
+    sorted_dens = sorted(set(densities))
+    
+    #llm stuff
+    def find_split(values):
+        """Find the best split point that maximizes inter-group distance."""
+        best_split = None
+        best_gap = -1
+        for i in range(len(values) - 1):
+            gap = values[i + 1] - values[i]
+            if gap > best_gap:
+                best_gap = gap
+                best_split = (values[i] + values[i + 1]) / 2.0
+        return best_split
+
+    # Find two split points dividing densities into three groups
+    split1 = find_split(sorted_dens)
+    lower = [v for v in sorted_dens if v < split1]
+    upper = [v for v in sorted_dens if v >= split1]
+    split2 = find_split(upper) if len(upper) > 1 else None
+
+    for a, d in zip(atoms, densities):
+        if split2 is not None:
+            if d < split1:
+                clust.append(a)
+            elif d < split2:
+                surf.append(a)
+            else:
+                bulk.append(a)
+        else:
+            if d < split1:
+                clust.append(a)
+            else:
+                bulk.append(a)
+
+    return bulk, surf, clust
+
 if __name__ == '__main__':
 
     folder = '/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/'
