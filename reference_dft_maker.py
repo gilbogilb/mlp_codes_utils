@@ -14,6 +14,7 @@ import numpy as np
 
 import sys
 
+#convergence study makers
 def convergence_ewfc_input_maker(symbol, 
                                  alat, 
                                  pseudo_dir,
@@ -140,7 +141,7 @@ def convergence_kpoints_smearing_input_maker(symbol,
 
     return
 
-
+#dft benchmarks makers
 def input_iso(symbol, parameters, vacuum=10.0):
     #writes input for a spin-polarized calculation of an isolated atom.
     #vacuum can be passed as an argument or in the parameters file.
@@ -213,7 +214,7 @@ def input_eos(symbol, alat_0, pseudo_dir, parameters, range_perc=(-3,3), npoints
 
     for a in alats:
         bulkfcc = bulk(symbol, 'fcc', a, cubic=True)
-        write(f'{symbol}_fcc_{a}.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos)
+        write(f'{symbol}_fcc_{a:.3f}.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos)
 
     return
 
@@ -404,10 +405,15 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
     
     return
 
+def parse_outputs(symbol):
+    """a parser for qe output files that produces a benchmark_setup file"""
+
+    return
+
 if __name__=='__main__':
 
-    if len(sys.argv)<3:
-        sys.exit(f'usage: {sys.argv[0]} chemical_symbol pseudo_dir')
+    if len(sys.argv)<4:
+        sys.exit(f'usage: {sys.argv[0]} chemical_symbol vacuum pseudo_dir')
 
     with open('parameters.yml', 'r') as f:
         parameters = yaml.safe_load(f)
@@ -416,5 +422,14 @@ if __name__=='__main__':
         parameters_relax = yaml.safe_load(f)
 
     symbol     = sys.argv[1] #chemical symbol
-    pseudo_dir = sys.argv[2] #pseudopotentials directory 
+    pseudo_dir = sys.argv[3] #pseudopotentials directory 
+    vacuum     = float(sys.argv[2]) #vacuum for surfs
 
+    alat_0     = parameters.get('latticeconstant')[symbol]
+
+    input_iso(symbol, parameters)
+    input_eos(symbol, alat_0, pseudo_dir, parameters)
+    input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax)
+    input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax)
+    input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
+    input_dimers(symbol, separation_range=(alat_0*0.8, alat_0*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters)
