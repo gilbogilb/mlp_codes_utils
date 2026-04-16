@@ -4,15 +4,19 @@
 
 import yaml
 
-from ase.io import write
+from ase.io import write, read
 from ase.build import bulk, fcc111, fcc110, fcc100
 from ase.cluster import Octahedron, Decahedron, Icosahedron
 from ase import Atoms
 from ase.units import Rydberg as ry
+from ase.units import kJ
+from ase.eos import EquationOfState
 
 import numpy as np
 
 import sys
+import os
+import glob
 
 #convergence study makers
 def convergence_ewfc_input_maker(symbol, 
@@ -119,6 +123,8 @@ def convergence_kpoints_smearing_input_maker(symbol,
         'control': {
             'calculation': 'scf',
             'pseudo_dir': pseudo_dir,
+            'tstress' : True,
+            'tprnfor': True,
         },
         'system': {
             'ecutwfc': ewfc,
@@ -405,15 +411,92 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
     
     return
 
-def parse_outputs(symbol):
-    """a parser for qe output files that produces a benchmark_setup file"""
+def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
+    """
+    Parse Quantum ESPRESSO output files and compute:
+    - E_iso: energy of isolated atom
+    - fcc_lattice_constant: equilibrium lattice constant from EOS fit
+    - cohesive_energy: cohesive energy per atom
+    - Bulk_modulus: from EOS fit
+    - 111/110/100 surface energies
+    """
+    results = {}
 
-    return
+    # --- Isolated atom ---
+    iso = read(os.path.join(directory, f"{symbol}_iso.pwo"))
+    E_iso = iso.get_potential_energy()
+    results["E_iso"] = E_iso
 
-if __name__=='__main__':
+    # --- EOS fit for bulk properties ---
+    # Collect all single-point fcc calculations (fixed lattice constants)
+    eos_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_fcc_*.pwo")))
+    eos_files = [f for f in eos_files if "relax" not in f]
 
-    if len(sys.argv)<4:
-        sys.exit(f'usage: {sys.argv[0]} chemical_symbol vacuum pseudo_dir')
+    volumes, energies = [], []
+    for f in eos_files:
+        atoms = read(os.path.join(directory, f))
+        volumes.append(atoms.get_volume())
+        energies.append(atoms.get_potential_energy())
+
+    eos = EquationOfState(volumes, energies, eos="murnaghan")
+    v0, e0, B = eos.fit()
+
+    # Lattice constant from volume: V = a^3 / 4 for fcc conventional cell
+    # (primitive cell has 1 atom, V = a^3/4)
+    a0 = (4 * v0) ** (1 / 3)
+    results["fcc_lattice_constant"] = round(float(a0), 4)
+
+    # Bulk modulus: ASE returns it in eV/Å^3, convert to GPa
+    results["Bulk_modulus"] = round(float(B / kJ * 1e24), 1)
+
+    #also write e0 from eos
+    results["ecoh_eos"] = e0
+
+    # --- Cohesive energy ---
+    # Use the relaxed bulk as reference
+    bulk_relax = read(os.path.join(directory, f"{symbol}_fcc_relax.pwo"))
+    N_bulk = len(bulk_relax)
+    E_bulk = bulk_relax.get_potential_energy()
+    E_coh = (E_bulk / N_bulk) - E_iso
+    results["cohesive_energy"] = round(float(E_coh), 4)
+
+    # --- Surface energies ---
+    # Surface energy = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
+    # Factor 2 because slab has two surfaces
+    E_bulk_per_atom = E_bulk / N_bulk
+
+    surface_tags = {
+        "111": f"{symbol}_surf_111_{surf_size}_relax.pwo",
+        "110": f"{symbol}_surf_110_{surf_size}_relax.pwo",
+        "100": f"{symbol}_surf_100_{surf_size}_relax.pwo",
+    }
+
+    for miller, fname in surface_tags.items():
+        slab = read(os.path.join(directory, fname))
+        N_slab = len(slab)
+        E_slab = slab.get_potential_energy()
+        cell = slab.get_cell()
+        # Surface area from cross product of two in-plane lattice vectors
+        A = np.linalg.norm(np.cross(cell[0], cell[1]))
+        E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
+        # Convert eV/Å^2 to J/m^2
+        E_surf_Jm2 = E_surf * 16.0218
+        results[f"{miller}_surface_energy"] = round(float(E_surf_Jm2), 3)
+
+    # --- Write to YAML ---
+    out_path = os.path.join(directory, f"{symbol}_reference_data.yaml")
+    with open(out_path, "w") as f:
+        yaml.dump(results, f, default_flow_style=False, sort_keys=False)
+
+    print(f"Results written to {out_path}")
+    return results
+
+
+#main wrappers
+def write_all_inputs(args): #args=sys.argv
+
+    if len(args)<4:
+        sys.exit(f'usage: {args} chemical_symbol vacuum pseudo_dir')
 
     with open('parameters.yml', 'r') as f:
         parameters = yaml.safe_load(f)
@@ -421,9 +504,9 @@ if __name__=='__main__':
     with open('parameters_relax.yml', 'r') as f:
         parameters_relax = yaml.safe_load(f)
 
-    symbol     = sys.argv[1] #chemical symbol
-    pseudo_dir = sys.argv[3] #pseudopotentials directory 
-    vacuum     = float(sys.argv[2]) #vacuum for surfs
+    symbol     = args[1] #chemical symbol
+    pseudo_dir = args[3] #pseudopotentials directory 
+    vacuum     = float(args[2]) #vacuum for surfs
 
     alat_0     = parameters.get('latticeconstant')[symbol]
 
@@ -433,3 +516,8 @@ if __name__=='__main__':
     input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax)
     input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
     input_dimers(symbol, separation_range=(alat_0*0.8, alat_0*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters)
+
+if __name__=='__main__':
+
+
+    parse_qe_results('Cu')
