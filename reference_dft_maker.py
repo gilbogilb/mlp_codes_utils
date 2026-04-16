@@ -148,7 +148,7 @@ def convergence_kpoints_smearing_input_maker(symbol,
     return
 
 #dft benchmarks makers
-def input_iso(symbol, parameters, vacuum=10.0):
+def input_iso(symbol, pseudo_dir, parameters, vacuum=10.0, smearing_divider=1.0):
     #writes input for a spin-polarized calculation of an isolated atom.
     #vacuum can be passed as an argument or in the parameters file.
     #given that convergence is sometimes hard to reach, delicate parameters
@@ -173,7 +173,7 @@ def input_iso(symbol, parameters, vacuum=10.0):
             'ecutrho': parameters.get('dual')*parameters.get('ecutwfc'),
             'occupations': 'smearing',
             'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry,
+            'degauss': parameters.get('degauss_eV')/ry/smearing_divider,
             'nspin': 2,
             'starting_magnetization': 1.0
         },
@@ -377,7 +377,7 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
 
     return
 
-def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, parameters):
+def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, parameters, smearing_divider=1.0):
 
     kpts    = None
     pseudos = parameters.get('pseudos') 
@@ -392,10 +392,10 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
             'ecutrho': parameters.get('dual')*parameters.get('ecutwfc'),
             'occupations': 'smearing',
             'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry,
+            'degauss': parameters.get('degauss_eV')/ry/smearing_divider,
         },
         'electrons': {
-            'mixing_beta': 0.3,
+            'mixing_beta': 0.05,
             'electron_maxstep': 1500,
             'mixing_mode': 'local-TF',
             'conv_thr': parameters.get('econv_eV_peratom')*2
@@ -407,7 +407,7 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
         dimer = Atoms([symbol]*2, [[0.,0.,0.], [0.,0.,d]])
         dimer.center(vacuum = vacuum) 
 
-        write(f'{symbol}_iso.pwi', dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+        write(f'{symbol}_dimer_{d}.pwi', dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
     
     return
 
@@ -482,6 +482,17 @@ def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
         # Convert eV/Å^2 to J/m^2
         E_surf_Jm2 = E_surf * 16.0218
         results[f"{miller}_surface_energy"] = round(float(E_surf_Jm2), 3)
+    
+    # --- dimers ---
+    dimers_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_dimer_*.pwo")))
+    dimer_sep, dimer_ene = [], []
+    for f in dimers_files:
+        atoms = read(f)
+        d = np.linalg.norm(atoms.positions[1]-atoms.positions[0])
+        dimer_sep.append(d)
+        dimer_ene.appned(atoms.get_potential_energy())
+    
+    np.savetxt(f'{symbol}_dimer_dft.dat', np.block(dimer_sep, dimer_ene))
 
     # --- Write to YAML ---
     out_path = os.path.join(directory, f"{symbol}_reference_data.yaml")
@@ -510,14 +521,13 @@ def write_all_inputs(args): #args=sys.argv
 
     alat_0     = parameters.get('latticeconstant')[symbol]
 
-    input_iso(symbol, parameters)
+    input_iso(symbol, parameters, smearing_divider=100.)
     input_eos(symbol, alat_0, pseudo_dir, parameters)
     input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax)
     input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax)
     input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
-    input_dimers(symbol, separation_range=(alat_0*0.8, alat_0*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters)
+    input_dimers(symbol, separation_range=(alat_0*0.8, alat_0*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters, smearing_divider=100.)
 
 if __name__=='__main__':
 
-
-    parse_qe_results('Cu')
+    write_all_inputs(sys.argv)
