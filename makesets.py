@@ -1,5 +1,6 @@
 #create a dataset in different ways and train a potential with flare
 #using ase to deal with data loading
+#add splitter in bulk/surf/cluster by means of number density
 
 import numpy as np
 from ase.io import read, write
