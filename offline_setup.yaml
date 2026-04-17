@@ -71,24 +71,19 @@ optimizer_options:
 dataset_style:        #random, ordered, intact, injected, cnap, gcn
 
 bulk_files:
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/bulk.xyz"
-
+  - 
 
 surf_files:
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/surf.xyz"
-  - "/Users/ginardi/Desktop/science/active-learning/45Ry/111/otf111_dft.xyz"
-  - "/Users/ginardi/Desktop/science/active-learning/45Ry/110/otf110_dft.xyz"
-  - "/Users/ginardi/Desktop/science/active-learning/45Ry/100/otf100_dft.xyz"
+  - 
 
 clusters_files:
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/clusters.xyz"
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/np-ads_all_dft_correction.xyz"
+  -
 
 #######################################
 ###only relevant for cnap, gcn style###
 #######################################
 
-solvation_shell_cutoff: 
+solvation_shell_cutoff:  #generally 0.88*alat
 
 #####################################
 
@@ -102,10 +97,8 @@ injection_frequency: 4
 stop_inject:         60
 
 injection_files:
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/isomers_relaxations.xyz"
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-100.xyz"
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-111.xyz"
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-110.xyz"
+  - #e.g. relaxed structures
+
 
 ######################################
 
