@@ -3,9 +3,21 @@
 #extensions: #add stress in ase2flare?
 #add stress error
 #take care with randomness - here, np.radnom is used, should set the seed in np as well;
+
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import huber
+
 import sys
 import time
+import json
+import tempfile
+import random
+import yaml
+from datetime import datetime
+from copy import deepcopy
+
+import flare
 from flare.bffs.sgp.calculator import SGP_Calculator
 from flare.bffs.gp.calculator import FLARE_Calculator
 from flare.bffs.sgp._C_flare import   B2, NormalizedDotProduct, SparseGP, Structure
@@ -14,22 +26,12 @@ from flare.learners.otf import OTF
 from flare.io import otf_parser
 from flare.scripts.otf_train import get_sgp_calc
 from flare.atoms import FLARE_Atoms
-import json
-import tempfile
-import copy
+
 from ase.io import read,write
-from scipy.optimize import minimize
-import flare
-import random
-import sys
-import yaml
-import copy
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
-from datetime import datetime
-from scipy.special import huber
+
 from makesets import *
-from copy import deepcopy
 from benchmark import compute_test_errors
 
 try:
@@ -634,43 +636,10 @@ def model_from_dict(json_dict_file):
 
 def main(config_file):
 
-    config_train = yaml.safe_load(open(sys.argv[1], 'r'))
+    config = yaml.safe_load(open(config_file, 'r'))
 
-    #implemented dataset styles:
-    #ordered (shuffle per-class, keep class order fixed - e.g. bulk, then surf, then clusters)
-    #random (all shuffled)
-    #injected (like ordered, with some files injected periodically - eveery injection_frequency - until the stop_inject config.)
-    #intact: leave the order given in the single files
-    #cnap: sort by increasing number of cnaps over number of atoms
-    #gcn_spread: sort by standard deviation of gcn in the configurations. 
-
-
-    if config_train["dataset_style"] == "injected":
-
-        files = config_train["bulk_files"] + config_train["surf_files"] + config_train["clusters_files"]
-        train, test, _ = make_sparsely_injected_sets(files, config_train["injection_files"], injection_frequency=4, stop_inject= 60, seed=config_train["seed"], shuffle_injections=True)
-
-    elif config_train["dataset_style"] == "random":
-
-        files = config_train["bulk_files"] + config_train["surf_files"] + config_train["clusters_files"] + config_train["injection_files"]
-        train, test, _ = make_random_sets(files, seed=config_train["seed"])
-
-    elif config_train["dataset_style"] == "ordered":
-
-        [train_b, train_s, train_c], [test_b, test_s, test_c], _ = make_sequential_sets(config_train["bulk_files"], config_train["surf_files"]+["/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-100.xyz", "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-110.xyz", "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-111.xyz" ], config_train["clusters_files"]+["/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/isomers_relaxations.xyz"], seed=config_train["seed"])
-
-        train = train_b + train_s + train_c
-        test  = test_b + test_s + test_c
-    
-    elif config_train['dataset_style'] == 'intact':
-        train = read(config_train['train_file'], index=':')
-        test  = read(config_train['test_file'], index=':')
-
-    if not config_train['dataset_style'] == 'intact':
-        write('train.xyz', train)
-        write('test.xyz', test)
-
-    train_offline(config_train, train, test)
+    train, test = make_sets(config)
+    train_offline(config, train, test)
 
 if __name__=='__main__':
 
