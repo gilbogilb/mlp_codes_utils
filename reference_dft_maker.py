@@ -542,9 +542,9 @@ def write_all_inputs(args): #args=sys.argv
     with open('parameters_relax.yml', 'r') as f:
         parameters_relax = yaml.safe_load(f)
 
-    symbol     = args[1] #chemical symbol
-    vacuum     = float(args[2]) #vacuum for surfs
-    pseudo_dir = args[3] #pseudopotentials directory 
+    symbol     = args[2] #chemical symbol
+    vacuum     = float(args[3]) #vacuum for surfs
+    pseudo_dir = args[4] #pseudopotentials directory 
     
 
     alat_0     = parameters.get('latticeconstant')[symbol]
@@ -558,19 +558,19 @@ def write_all_inputs(args): #args=sys.argv
 
 if __name__=='__main__':
 
-    if not (sys.argv[1]!='input' or sys.argv[1]!='parse'):
+    if len(sys.argv)<2 or (not (sys.argv[1]=='input' or sys.argv[1]=='parse')):
         print(f'USAGE: {sys.argv[0]} <mode> <args>')
         print('--------------------------')
         print('if <mode>==input, args should be: <chemical_symbol> <vacuum_for_surfaces_and_clusters> <pseudopotenials_directory>')
         print('and parameters.yml and parameters_relax.yml should be present in the execution folder.')
         print('--------------------------')
-        print('if <mode>==parse, args should be: <chemical_symbol>')
+        print('if <mode>==parse, args should be: <chemical_symbol> [isolated_atom_energy_in_Rydberg - optional]')
 
     if sys.argv[1] == 'input':
         write_all_inputs(sys.argv)
     
     elif sys.argv[1] == 'parse':
         if len(sys.argv)>2:
-            parse_qe_results(symbol=sys.argv[1], E_iso_ry=float(sys.argv[2]) )
+            parse_qe_results(symbol=sys.argv[2], E_iso_ry=float(sys.argv[3]) )
         else:
-            parse_qe_results(sys.argv[1])
+            parse_qe_results(symbol=sys.argv[2])
