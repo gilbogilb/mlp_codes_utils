@@ -236,7 +236,7 @@ def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax):
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
-            'ecutrho': parameters_relax.get('ecutwfc')*parameters.get('dual'),
+            'ecutrho': parameters_relax.get('ecutwfc')*parameters_relax.get('dual'),
             'occupations': 'smearing',
             'smearing': 'cold',
             'degauss': parameters_relax.get('degauss_eV')/ry,
@@ -296,7 +296,7 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
-            'ecutrho': parameters_relax.get('ecutwfc')*parameters.get('dual'),
+            'ecutrho': parameters_relax.get('ecutwfc')*parameters_relax.get('dual'),
             'occupations': 'smearing',
             'smearing': 'cold',
             'degauss': parameters_relax.get('degauss_eV')/ry,
@@ -331,11 +331,11 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
             'pseudo_dir': pseudo_dir,
         },
         'system': {
-            'ecutwfc': parameters.get('ecutwfc'),
-            'ecutrho': parameters.get('dual')*parameters.get('ecutwfc'),
+            'ecutwfc': parameters_relax.get('ecutwfc'),
+            'ecutrho': parameters_relax.get('dual')*parameters_relax.get('ecutwfc'),
             'occupations': 'smearing',
             'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry,
+            'degauss': parameters_relax.get('degauss_eV')/ry,
         },
         'electrons': {
             'mixing_beta': 0.4,
@@ -407,7 +407,7 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
         dimer = Atoms([symbol]*2, [[0.,0.,0.], [0.,0.,d]])
         dimer.center(vacuum = vacuum) 
 
-        write(f'{symbol}_dimer_{d}.pwi', dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+        write(f'{symbol}_dimer_{d:.3f}.pwi', dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
     
     return
 
@@ -521,12 +521,12 @@ def write_all_inputs(args): #args=sys.argv
 
     alat_0     = parameters.get('latticeconstant')[symbol]
 
-    input_iso(symbol, parameters, smearing_divider=100.)
+    input_iso(symbol, pseudo_dir, parameters, smearing_divider=100.)
     input_eos(symbol, alat_0, pseudo_dir, parameters)
     input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax)
     input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax)
     input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
-    input_dimers(symbol, separation_range=(alat_0*0.8, alat_0*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters, smearing_divider=100.)
+    input_dimers(symbol, separation_range=(alat_0/1.412*0.65, alat_0/1.412*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters, smearing_divider=100.)
 
 if __name__=='__main__':
 
