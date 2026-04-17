@@ -68,6 +68,8 @@ optimizer_options:
     - 0.01
 
 
+dataset_style:        #random, ordered, intact, injected, cnap, gcn
+
 bulk_files:
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/bulk.xyz"
 
@@ -81,16 +83,39 @@ surf_files:
 clusters_files:
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/clusters.xyz"
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/np-ads_all_dft_correction.xyz"
-#skipping refine-melting
+
+#######################################
+###only relevant for cnap, gcn style###
+#######################################
+
+solvation_shell_cutoff: 
+
+#####################################
+
+
+
+######################################
+###only relevant for injected style###
+######################################
+
+injection_frequency: 4
+stop_inject:         60
 
 injection_files:
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/isomers_relaxations.xyz"
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-100.xyz"
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-111.xyz"
   - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/cu-relax-110.xyz"
-  - "/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/ih147.xyz"
 
-train_file: 'cnaps_sorted_train.xyz'
-test_file: 'test.xyz'
+######################################
 
-dataset_style:
+
+
+####################################
+###only relevant for intact style###
+####################################
+
+train_file:
+test_file:
+
+#####################################

@@ -1,6 +1,6 @@
 #create a dataset in different ways and train a potential with flare
 #using ase to deal with data loading
-#add splitter in bulk/surf/cluster by means of number density
+#add extra files (e.g. detached atoms) and a final main function to produce a train and test set
 
 import numpy as np
 from ase.io import read, write
@@ -100,6 +100,11 @@ def make_sparsely_injected_sets(files, files_for_injection, injection_frequency,
         all_injections.append(frames)
     assert len(all_injections)==len(files_for_injection)
 
+    #all_injections is a list of lists. The structure should be modified a bit if you want to really 
+    #shuffle all configs.
+    #if shuffle_injections:
+    #    random.shuffle(all_injections)
+
     final_train_set = []
     injections_iter = 0
 
@@ -136,36 +141,36 @@ def make_sparsely_injected_sets(files, files_for_injection, injection_frequency,
 ###What's a good measure of disorder in atomistic configurations?
 #some experimental utilities: sort configurations by how ordered they are (type 1: GCN stddev, type 2: CNAPs number)
 
-def sort_by_gcn(set, cutoff, pbc=True):
+def sort_by_gcn(conf_set, cutoff, pbc=True):
     """
     sort configs in set by increasing spread of the generalized coordination number of the atoms in the frames,
     quantified as the standard deviation of the gcns
     """
     from snow.descriptors.coordination import agcn_calculator
 
-    gcn_sds = np.zeros(len(set))
+    gcn_sds = np.zeros(len(conf_set))
 
-    for i, frame in enumerate(set):
+    for i, frame in enumerate(conf_set):
         _, gcns = agcn_calculator(frame.get_positions(), cutoff, pbc=pbc, box=frame.get_cell())
         sd = np.std(gcns)
         gcn_sds[i] = sd
     
     ids = np.argsort(gcn_sds)
     gcn_sds = gcn_sds[ids]
-    sorted_frames = [set[i] for i in ids]
+    sorted_frames = [conf_set[i] for i in ids]
 
     return sorted_frames, gcn_sds, ids
 
-def sort_by_cnap_number(frames, cutoff, pbc=True, keep_order=False):
+def sort_by_cnap_number(frames, cutoff, pbc=True):
     """
     sort by the number of distinct cnaps normalized by the number of atoms in the system.
     """
     
     from snow.descriptors.cna import cna_peratom, cnap_peratom
 
-    cnap_ratios = np.zeros(len(frames))  
+    cnap_ratios = np.zeros(len(frames))
     
-    for i, frame in enumerate(frames):   
+    for i, frame in enumerate(frames):  
         cnas = cna_peratom(frame.get_positions(), cutoff, pbc, box=frame.get_cell())
         pattern_counter = Counter()
 
@@ -233,11 +238,88 @@ def split_bulk_surf_clust(atoms):
 
     return bulk, surf, clust
 
+def make_sets(config):
+    """
+    use info in the config_yaml object to create a train and test set using the functions defined above.
+    
+    implemented dataset styles:
+    ordered (shuffle per-class, keep class order fixed - e.g. bulk, then surf, then clusters)
+    random (all shuffled) --- DEFAULT
+    injected (like ordered, with some files injected periodically - eveery injection_frequency - until the stop_inject config.)
+    intact: leave the order given in the single files
+    cnap: sort by increasing number of cnaps over number of atoms
+    gcn_spread: sort by standard deviation of gcn in the configurations. 
+    """
+
+    style = config.get("dataset_style", 'random') #default style is random
+    seed  = config.get("seed")
+
+    if style == "injected":
+
+        injection_frequency = config.get('injection_frequency', 4)
+        stop_inject         = config.get('stop_ionject', 60)
+
+        files = config.get('bulk_files') + config.get('surf_files') + config.get('clusters_files')
+        train, test, _ = make_sparsely_injected_sets(files, 
+                                                    config.get("injection_files"),
+                                                    injection_frequency=injection_frequency,
+                                                    stop_inject= stop_inject,
+                                                    seed=config.get("seed"))
+
+    elif style == "random":
+
+        files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
+        train, test, _ = make_random_sets(files, seed=seed)
+
+    elif style == "ordered":
+
+        bulks  = config.get('bulk_files')
+        surfs  = config.get('surf_files')
+        clusts = config.get('clusters_files')
+        [train_b, train_s, train_c], [test_b, test_s, test_c], _ = make_sequential_sets(bulks, surfs, clusts, seed=seed)
+
+        train = train_b + train_s + train_c
+        test  = test_b + test_s + test_c
+    
+    elif style == 'intact':
+        train = read(config.get('train_file'), index=':')
+        test  = read(config.get('test_file'), index=':')
+
+    elif style == 'cnap':
+
+        #just like random
+        files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
+        train, test, _ = make_random_sets(files, seed=seed)
+
+        #sort by cnap number over atoms number
+        cutoff = config.get('solvation_shell_cutoff')
+        train, _, _  = sort_by_cnap_number(train, cutoff)
+        test, _, _   = sort_by_cnap_number(test, cutoff)
+
+    elif style == 'gcn':
+
+        #just like random
+        files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
+        train, test, _ = make_random_sets(files, seed=seed)
+
+        #sort by gcn distribution standard deviation
+        cutoff = config.get('solvation_shell_cutoff')   
+        train, _, _  = sort_by_gcn(train, cutoff)
+        test, _, _   = sort_by_gcn(test, cutoff)
+
+    else:
+        sys.exit(f'style {style} is not implemented.')
+
+
+    #if style is intact you already have your train set and test set. otherwise, export them.
+    if not style == 'intact':
+        write('train.xyz', train)
+        write('test.xyz', test)
+    
+    return train, test
+
+
 if __name__ == '__main__':
 
-    folder = '/Users/ginardi/Desktop/science/dft/DFT_xyz_45ry/'
-    files  = [folder+'bulk.xyz', folder+'surf.xyz', folder+'clusters.xyz']
-    injections = [folder+'cu-relax-100.xyz', folder+'isomers_relaxations.xyz']
-
-    tr, te, _ = make_sparsely_injected_sets(files, injections, 4, 60)
-    write('train.xyz', tr)
+    config = yaml.safe_load(open(sys.argv[1], 'r'))
+    make_sets(config)

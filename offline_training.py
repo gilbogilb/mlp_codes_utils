@@ -1,5 +1,5 @@
 
-#code by davide alimonti
+#some code by davide alimonti
 #extensions: #add stress in ase2flare?
 #add stress error
 #take care with randomness - here, np.radnom is used, should set the seed in np as well;
@@ -635,6 +635,15 @@ def model_from_dict(json_dict_file):
 def main(config_file):
 
     config_train = yaml.safe_load(open(sys.argv[1], 'r'))
+
+    #implemented dataset styles:
+    #ordered (shuffle per-class, keep class order fixed - e.g. bulk, then surf, then clusters)
+    #random (all shuffled)
+    #injected (like ordered, with some files injected periodically - eveery injection_frequency - until the stop_inject config.)
+    #intact: leave the order given in the single files
+    #cnap: sort by increasing number of cnaps over number of atoms
+    #gcn_spread: sort by standard deviation of gcn in the configurations. 
+
 
     if config_train["dataset_style"] == "injected":
 
