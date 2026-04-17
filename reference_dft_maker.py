@@ -444,15 +444,18 @@ def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
 
     volumes, energies = [], []
     for f in eos_files:
-        atoms = read(os.path.join(directory, f))
-        volumes.append(atoms.get_volume())
-        energies.append(atoms.get_potential_energy())
+        try:
+            atoms = read(os.path.join(directory, f))
+            volumes.append(atoms.get_volume())
+            energies.append(atoms.get_potential_energy())
+        except Exception as e:
+            print(f'Could not read {fname}: {e}')
 
+    #fit
     eos = EquationOfState(volumes, energies, eos="murnaghan")
     v0, e0, B = eos.fit()
 
-
-    # lattice constant and ecoh and bulkmod
+    #do some conversions
     a0 = (4 * v0/len(atoms)) ** (1 / 3)
     results["fcc_lattice_constant"] = float(a0)
     results["a0_eos"] = float(a0)
@@ -463,7 +466,7 @@ def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
     results["ecoh_eos"] = float(e0/len(atoms)-E_iso)
 
     #write eos to file
-    alats = [v ** (1/3) for v in volumes]
+    alats = [(4*v/len(atoms)) ** (1/3) for v in volumes]
     np.savetxt(f'{symbol}_eos.dat', np.column_stack((alats, energies)))
     results['eos_file'] = f'{symbol}_eos.dat'
 
@@ -488,17 +491,20 @@ def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
     }
 
     for miller, fname in surface_tags.items():
-        slab = read(os.path.join(directory, fname))
-        N_slab = len(slab)
-        E_slab = slab.get_potential_energy()
-        cell = slab.get_cell()
-        # Surface area from cross product of two in-plane lattice vectors
-        A = np.linalg.norm(np.cross(cell[0], cell[1]))
-        E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
-        # Convert eV/Å^2 to J/m^2
-        E_surf_Jm2 = E_surf * 16.0218
-        results[f"{miller}_surface_energy"] = round(float(E_surf_Jm2), 3)
-    
+        try:
+            slab = read(os.path.join(directory, fname))
+            N_slab = len(slab)
+            E_slab = slab.get_potential_energy()
+            cell = slab.get_cell()
+            # Surface area from cross product of two in-plane lattice vectors
+            A = np.linalg.norm(np.cross(cell[0], cell[1]))
+            E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
+            # Convert eV/Å^2 to J/m^2
+            E_surf_Jm2 = E_surf * 16.0218
+            results[f"{miller}_surface_energy"] = float(E_surf_Jm2)
+        except Exception as e:
+            print(f'Could not read {fname}: {e}')
+
     # --- dimers ---
     dimers_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_dimer_*.pwo")))
     dimer_sep, dimer_ene = [], []
@@ -537,8 +543,9 @@ def write_all_inputs(args): #args=sys.argv
         parameters_relax = yaml.safe_load(f)
 
     symbol     = args[1] #chemical symbol
-    pseudo_dir = args[3] #pseudopotentials directory 
     vacuum     = float(args[2]) #vacuum for surfs
+    pseudo_dir = args[3] #pseudopotentials directory 
+    
 
     alat_0     = parameters.get('latticeconstant')[symbol]
 
@@ -551,8 +558,19 @@ def write_all_inputs(args): #args=sys.argv
 
 if __name__=='__main__':
 
-    #write_all_inputs(sys.argv)
-    if len(sys.argv)>2:
-        parse_qe_results(symbol=sys.argv[1], E_iso_ry=float(sys.argv[2]) )
-    else:
-        parse_qe_results(sys.argv[1])
+    if not (sys.argv[1]!='input' or sys.argv[1]!='parse'):
+        print(f'USAGE: {sys.argv[0]} <mode> <args>')
+        print('--------------------------')
+        print('if <mode>==input, args should be: <chemical_symbol> <vacuum_for_surfaces_and_clusters> <pseudopotenials_directory>')
+        print('and parameters.yml and parameters_relax.yml should be present in the execution folder.')
+        print('--------------------------')
+        print('if <mode>==parse, args should be: <chemical_symbol>')
+
+    if sys.argv[1] == 'input':
+        write_all_inputs(sys.argv)
+    
+    elif sys.argv[1] == 'parse':
+        if len(sys.argv)>2:
+            parse_qe_results(symbol=sys.argv[1], E_iso_ry=float(sys.argv[2]) )
+        else:
+            parse_qe_results(sys.argv[1])
