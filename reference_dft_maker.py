@@ -269,7 +269,7 @@ def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
     return [kx, ky, 1]
 
 def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
-    #writes quantum espresso inputs for relax calculations of surfaces 
+    #writes quantum espresso inputs for relax calculations of surfaces
     #fcc 111 110 100 with dft parameters from parameters_relax.
     #Structures are created with the initial lattice constant parameters_relax[latticeconstant][symbol]
     #and kpts are rescaled to have the equivalent of parameters_relax[kpts] points in the conventional
@@ -280,8 +280,8 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
     pseudos = parameters_relax.get('pseudos')
 
     s111 = fcc111(symbol, size, a=ref_lattice, vacuum=vacuum)
-    s110 = fcc111(symbol, size, a=ref_lattice, vacuum=vacuum)
-    s100 = fcc111(symbol, size, a=ref_lattice, vacuum=vacuum)
+    s110 = fcc110(symbol, size, a=ref_lattice, vacuum=vacuum)
+    s100 = fcc100(symbol, size, a=ref_lattice, vacuum=vacuum)
 
     k111 = kpts_surf_calculator(s111.get_cell(), kpts_equiv, ref_lattice)
     k110 = kpts_surf_calculator(s110.get_cell(), kpts_equiv, ref_lattice)
@@ -411,7 +411,7 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
     
     return
 
-def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
+def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
     """
     Parse Quantum ESPRESSO output files and compute:
     - E_iso: energy of isolated atom
@@ -423,9 +423,19 @@ def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
     results = {}
 
     # --- Isolated atom ---
-    iso = read(os.path.join(directory, f"{symbol}_iso.pwo"))
-    E_iso = iso.get_potential_energy()
-    results["E_iso"] = E_iso
+    #having some problems due to the magnetic moment not being read quite correctly.
+    #will be able to insert the isolated atom energy (in rydberg) from commandline
+    try:
+        iso = read(os.path.join(directory, f"{symbol}_iso.pwo"))
+        E_iso = iso.get_potential_energy()
+        results["E_iso"] = E_iso
+    except Exception as e:
+        print(f'Could not read the isolated atom file - {e}. Trying with user-specified argument...')
+        if E_iso_ry is not None:
+            E_iso = E_iso_ry*ry
+            results["E_iso"] = E_iso
+        else:
+            sys.exit('Could not read isolated atom energy from the .pwo file. Please provide it as argument to the qe parser function (generally ref_maker.py symbol E_iso_ry (in Rydberg!!))')
 
     # --- EOS fit for bulk properties ---
     # Collect all single-point fcc calculations (fixed lattice constants)
@@ -441,24 +451,30 @@ def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
     eos = EquationOfState(volumes, energies, eos="murnaghan")
     v0, e0, B = eos.fit()
 
-    # Lattice constant from volume: V = a^3 / 4 for fcc conventional cell
-    # (primitive cell has 1 atom, V = a^3/4)
-    a0 = (4 * v0) ** (1 / 3)
-    results["fcc_lattice_constant"] = round(float(a0), 4)
 
+    # lattice constant and ecoh and bulkmod
+    a0 = (4 * v0/len(atoms)) ** (1 / 3)
+    results["fcc_lattice_constant"] = float(a0)
+    results["a0_eos"] = float(a0)
     # Bulk modulus: ASE returns it in eV/Å^3, convert to GPa
-    results["Bulk_modulus"] = round(float(B / kJ * 1e24), 1)
+    results["Bulk_modulus"] = float(B / kJ * 1e24)
 
-    #also write e0 from eos
-    results["ecoh_eos"] = e0
+    #write e0 from eos
+    results["ecoh_eos"] = float(e0/len(atoms)-E_iso)
 
-    # --- Cohesive energy ---
+    #write eos to file
+    alats = [v ** (1/3) for v in volumes]
+    np.savetxt(f'{symbol}_eos.dat', np.column_stack((alats, energies)))
+    results['eos_file'] = f'{symbol}_eos.dat'
+
     # Use the relaxed bulk as reference
     bulk_relax = read(os.path.join(directory, f"{symbol}_fcc_relax.pwo"))
     N_bulk = len(bulk_relax)
     E_bulk = bulk_relax.get_potential_energy()
     E_coh = (E_bulk / N_bulk) - E_iso
-    results["cohesive_energy"] = round(float(E_coh), 4)
+    results["cohesive_energy"] = float(E_coh)
+    results["ecoh_relax"] = float(E_coh)
+    results["a0_relax"] = float( bulk_relax.get_cell().volume ** (1./3.)   )
 
     # --- Surface energies ---
     # Surface energy = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
@@ -487,12 +503,17 @@ def parse_qe_results(symbol, directory=".", surf_size='1x1x8'):
     dimers_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_dimer_*.pwo")))
     dimer_sep, dimer_ene = [], []
     for f in dimers_files:
-        atoms = read(f)
-        d = np.linalg.norm(atoms.positions[1]-atoms.positions[0])
-        dimer_sep.append(d)
-        dimer_ene.appned(atoms.get_potential_energy())
+        #check if the calculation worked - it might have not converged...
+        try:
+            atoms = read(f)
+            d = np.linalg.norm(atoms.positions[1]-atoms.positions[0])
+            dimer_sep.append(d)
+            dimer_ene.append(atoms.get_potential_energy())
+        except Exception as e:
+            print(f'Could not read data from {f} ({e}). It is possible the calculation did not converge...')
     
-    np.savetxt(f'{symbol}_dimer_dft.dat', np.block(dimer_sep, dimer_ene))
+    np.savetxt(f'{symbol}_dimer_dft.dat', np.column_stack( (dimer_sep, dimer_ene) ) )
+    results["dimer_curve_file"] = f'{symbol}_dimer_dft.dat'
 
     # --- Write to YAML ---
     out_path = os.path.join(directory, f"{symbol}_reference_data.yaml")
@@ -530,4 +551,8 @@ def write_all_inputs(args): #args=sys.argv
 
 if __name__=='__main__':
 
-    write_all_inputs(sys.argv)
+    #write_all_inputs(sys.argv)
+    if len(sys.argv)>2:
+        parse_qe_results(symbol=sys.argv[1], E_iso_ry=float(sys.argv[2]) )
+    else:
+        parse_qe_results(sys.argv[1])
