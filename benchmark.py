@@ -686,7 +686,7 @@ def predict_configs(calc, e_iso_ref, files_to_predict, ref_cohesive_energy=None)
 def main(config):
 
     #load config.yml settings 
-    with open(sys.argv[1],'r') as f:
+    with open(config,'r') as f:
         setup = yaml.safe_load(f)
     
     #get ab-initio data and physical system data
