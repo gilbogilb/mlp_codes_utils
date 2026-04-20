@@ -412,7 +412,11 @@ def get_dft_data(conf):
     #get DFT data in the proper format
     dft_energy = conf.get_potential_energy()
     dft_forces = conf.get_forces()
-    dft_stress = conf.get_stress()
+    try:
+        dft_stress = conf.get_stress()
+    except Exception as e:
+        print(f'Could not get stresses from this config: {e}')
+        dft_stress = None
 
     # Convert ASE stress (xx, yy, zz, yz, xz, xy) to FLARE stress
     # (xx, xy, xz, yy, yz, zz).
@@ -436,7 +440,8 @@ def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
     #add write to json
-    #make better use of logging, export data such as which sparse env you are selecting
+    #implement style=accept in optimization
+
 
     #use function from flare package
     #set stress_training in the config file, eventually
@@ -452,8 +457,11 @@ def train_offline(config, train_set, test_set):
 
     nr_initial_envs = config["nr_initial_envs"]
 
-    species_code = config["species_code"]
-    isolated_energies = config["isolated_energies"]
+    iso_energies = config["flare_calc"]["single_atom_energies"] #for convenience. A list with all the single-atom energies for the species in the system
+    species      = config["flare_calc"]["species"]
+
+    #species_code = config["species_code"]
+    #isolated_energies = config["isolated_energies"]
 
     files_prefix = config["files_prefix"]
 
@@ -496,7 +504,7 @@ def train_offline(config, train_set, test_set):
 
     #start training
     print("Training...")
-    file_log.write('Training...')
+    file_log.write('Training starts...')
 
     ######
     #main loop
@@ -508,9 +516,9 @@ def train_offline(config, train_set, test_set):
 
         flare_conf      = FLARE_Atoms.from_ase_atoms(conf, copy_calc_results=True)#FLARE_Atoms.from_ase_atoms(conf)#ase2flare(struct, species_code, isolated_energies) #or FLARE_Atoms.from_ase_atoms()?
         flare_conf.calc = flare_calc
+        sgp = flare_calc.gp_model#.sparse_gp
 
         energy, forces, stress = get_dft_data(conf)
-        sgp = flare_calc.gp_model#.sparse_gp
 
         #initial step
         if step==0:
@@ -524,7 +532,7 @@ def train_offline(config, train_set, test_set):
             sparse_indices.append(indices.tolist())
             conf.info["sparse_set"] = np.array(indices)
             training_structures.append(conf)
-            file_log.write('initialized gp with radnom enviornments: atoms' + np.array2string(indices) + '\n')
+            file_log.write('initialized gp with random enviornments: atoms' + np.array2string(indices) + '\n')
             file_log.flush()
 
             #end first step
@@ -535,21 +543,24 @@ def train_offline(config, train_set, test_set):
 
             #compute uncertainties
             flare_conf.calc.calculate(atoms=conf, properties='stds')
-            stds = flare_conf.calc.results.get("stds", np.zeros_like(forces))
+            stds = flare_conf.calc.results.get("stds")#, np.zeros_like(forces)) why would i like to have a deafult to 0?
             
             if np.max(stds)>call_threshold:
                 oracle_calls +=1
 
                 #get high uncertainty configs
                 indices = np.where(stds>add_threshold)[0]
-                sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #differnt from davide, but as in flare-otf. Could it be differnt for the full set?
-
-                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds[indices]) +'\n')
-                sparse_indices.append(indices.tolist())
+                sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #different from davide, but as in flare-otf. Could it be differnt for the full set?
                 nsparse += len(indices)
                 conf.info["sparse_set"] = np.array(indices)
+
                 training_structures.append(conf)
 
+                #log
+                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds[indices]) +'\n')
+                sparse_indices.append(indices.tolist())
+
+                #should we optimize?
                 if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
 
                     file_log.write(f"optimizing call #{oracle_calls}...")
@@ -568,7 +579,6 @@ def train_offline(config, train_set, test_set):
                         file_hyps.flush()
                         #all ok
 
-                        #del training_structures[-1]
                 else:
                     pass
 
@@ -576,7 +586,8 @@ def train_offline(config, train_set, test_set):
 
                 #log_errors(sgp.sparse_gp, test_set) TODO - for backwards compatibility
                 #check errors for the learning curve
-                errors = compute_test_errors(flare_calc, 'test.xyz', config["isolated_energies"][str(test_set[0].numbers[0])], use_norm=False, tqdm_extra_string=f'step={step}')
+                E_iso = iso_energies[0] #TODO: extend to multi-specie
+                errors = compute_test_errors(flare_calc, 'test.xyz', E_iso, use_norm=False, tqdm_extra_string=f'step={step}')
                 log_errors_gibo(errors, file_maes_e, file_maes_f, step)
 
                 file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
