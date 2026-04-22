@@ -682,6 +682,49 @@ def predict_configs(calc, e_iso_ref, files_to_predict, ref_cohesive_energy=None)
 
     return results
 
+def compute_phonons(calc,
+                    dispalcement_distance=0.02,
+                    phonon_file_in=None, 
+                    ase_crystal=None, #primitive cell!
+                    out_file_phonon_name='phonon', 
+                    out_file_bands_name='bands',
+                    **argv):
+    """
+    create a phononpy object by either reading it from file or generating it from zero.
+    Then, use the provided calculator to compute phonons. the phonon object and the bands are written to the provided output files"""
+
+    if phonon_file_in is None and ase_crystal is None:
+        print('will generate the ase crystal starting from scratch, using the argv arguments')
+
+    from phonopy import Phonopy, load
+    from phonopy.structure.atoms import PhonopyAtoms
+
+
+    if phonon_file_in is not None:
+        phonon = load(phonon_file_in)
+
+    elif ase_crystal is not None:
+        cell = ase_crystal.get_cell
+        phcell = PhonopyAtoms(cell=cell.get_cell(), positions=cell.get_positions(), numbers=cell.get_atomic_numbers())
+        phonon = Phonopy(phcell, supercell_matrix=np.eye(3)*4)
+
+    else:
+        sys.exit('generating our own phonon file is not implemented yet.')
+    
+    phonon.generate_displacements(distance = dispalcement_distance)
+    forces = []
+
+    for i, supercell in enumerate(phonon.supercells_with_displacements):
+        atoms = Atoms(cell=supercell.cell, numbers=supercell.numbers, positions=supercell.positions, pbc=True) #ase atoms
+        atoms.calc = calc
+        forces.append(atoms.get_forces()) #computes forces along the way
+
+    phonon.forces = forces
+    phonon.produce_force_constants()
+    phonon.save(out_file_phonon_name, settings={"force_constants": True})
+    phonon.auto_band_structure(write_yaml=True, filename=out_file_bands_name) #to plot: phonopy-bandplot bands.yaml
+
+    return
 
 def get_calc(config):
 

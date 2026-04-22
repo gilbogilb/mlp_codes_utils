@@ -2,6 +2,8 @@
 #write inputs
 #run pw.x from bash
 
+# add offsets!
+
 import yaml
 
 from ase.io import write, read
@@ -11,6 +13,7 @@ from ase import Atoms
 from ase.units import Rydberg as ry
 from ase.units import kJ
 from ase.eos import EquationOfState
+from ase.spacegroup import crystal
 
 import numpy as np
 
@@ -254,17 +257,22 @@ def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax):
 
     return
 
+def kpts_equiv(length, kpts_ref, length_ref, floor=True):
+
+    k = kpts_ref*length_ref/length
+
+    if floor==False:
+        k +=1
+
+    return k
+
 def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
 
     Lx = cell[0][0]
     Ly = cell[1][1]
 
-    kx = int(kpts_equivalent_conventional*a_ref/Lx)
-    ky = int(kpts_equivalent_conventional*a_ref/Ly)
-
-    if floor==False:
-        kx+=1
-        ky+=1
+    kx = kpts_equiv(Lx, kpts_equivalent_conventional, a_ref, floor)
+    ky = kpts_equiv(Ly, kpts_equivalent_conventional, a_ref, floor)
 
     return [kx, ky, 1]
 
@@ -306,7 +314,7 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
         'electrons': {
             'mixing_beta': 0.4,
             'electron_maxstep': 500,
-            'mixing_mode': 'TF',
+            #'mixing_mode': 'TF',
             'conv_thr': parameters_relax.get('econv_eV_peratom')/ry*nat
         },
     }
@@ -413,6 +421,78 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
     
     return
 
+def input_phonons(symbol, 
+                  alat_relax, 
+                  pseudo_dir, 
+                  parameters, 
+                  conv_thr=1e-10, 
+                  displacement_distance=0.02, 
+                  supercell_size=4, 
+                  files_prefix='phonopy_structure', #.pwi
+                  phonon_file='phonopy' #.yaml
+                  ):
+
+    """
+    use phonopy to write inputs for the calcualtions needed to get the phonon dispersion curve with 
+    the finite displacement method.
+    Some paramters to take extra care about:
+     - conv_thr: generally needs to be tighter than usual, default to 1e-10
+     - displacement_distance: the distance atoms should be displaced by in phonopy-generated configs
+    Currently only working for single-specie fcc materials. Filenames get the chemical symbol appended before them.
+    """
+
+    from phonopy import Phonopy
+    from phonopy.structure.atoms import PhonopyAtoms
+
+    #structures generation (eventually put in another function)
+    #make an ase structure
+    cell = crystal(symbol, [(0.,0.,0.)], spacegroup=225, cellpar=[alat_relax, alat_relax, alat_relax, 90., 90., 90.], primitive_cell=True)
+
+    #phonopy stuff 
+    phcell = PhonopyAtoms(cell=cell.get_cell(), positions=cell.get_positions(), numbers=cell.get_atomic_numbers())
+    phonon = Phonopy(phcell, supercell_matrix=np.eye(3)*supercell_size)
+    phonon.generate_displacements(distance=displacement_distance)
+
+    input_data = {
+        'control': {
+            'calculation': 'scf',
+            'pseudo_dir': pseudo_dir,
+            'tprnfor': True,
+            'tstress': False
+        },
+        'system': {
+            'ecutwfc': parameters.get('ecutwfc'),
+            'ecutrho': parameters.get('ecutwfc')*parameters.get('dual'),
+            'occupations': 'smearing',
+            'smearing': 'cold',
+            'degauss': parameters.get('degauss_eV')/ry,
+        },
+        'electrons': {
+            'mixing_beta': 0.4,
+            'electron_maxstep': 500,
+            'mixing_mode': 'TF',
+            'conv_thr': conv_thr
+        },
+    }
+
+    pseudos = parameters.get('pseudos')
+    k_conv_cell = parameters.get('kpts')
+    koff = parameters.get('koffset', 0)
+
+    for i, supercell in enumerate(phonon.supercell_with_displacements):
+
+        atoms = Atoms(cell=supercell.cell, numbers=supercell.numbers, positions=supercell.positions, pbc=True)
+
+        k = kpts_equiv(atoms.cell.lengths()[0], k_conv_cell, alat_relax)
+
+        write(f'{symbol}_{files_prefix}_{i}.pwi', atoms, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset=koff)
+    
+    phonon.save(f'{symbol}_{phonon_file}.yaml')
+
+    return
+
+
+#parsing functions
 def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
     """
     Parse Quantum ESPRESSO output files and compute:
@@ -530,6 +610,24 @@ def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
 
     print(f"Results written to {out_path}")
     return results
+
+def parse_phonons(files, phonon_file_in, phonon_file_out='phonopy_params.yaml', band_file_out='band.yaml'):
+
+    from phonopy import Phonopy, load
+
+    phonon = load(phonon_file_in)
+    forces = []
+
+    for f in files:
+        atoms = read(f)
+        forces.append(atoms.get_forces())
+        
+    phonon.forces = forces
+    phonon.produce_force_constants()
+    phonon.save(phonon_file_out, settings={"force_constants": True})
+    phonon.auto_band_structure(write_yaml=True, filename=band_file_out) #to plot: phonopy-bandplot bands.yaml
+
+    return
 
 
 #main wrappers
