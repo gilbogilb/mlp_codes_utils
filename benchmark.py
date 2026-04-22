@@ -683,10 +683,45 @@ def predict_configs(calc, e_iso_ref, files_to_predict, ref_cohesive_energy=None)
     return results
 
 
-def main(config):
+def get_calc(config):
+
+    calc_style = config.get("calculator")
+    model_file = config.get("model_file")
+
+    if calc_style == "flare_lammps":
+        from lammps import lammps as lmp
+        from ase.calculators.lammpslib import LAMMPSlib #ideally, for all potentials, in fact, use direct calculators
+        #lammps+flare commands
+        cmds= ["pair_style flare",
+            "pair_coeff * * "+model_file]
+        #a common calculator for the entire program - some things don't work otherwise
+        calc = LAMMPSlib(lmpcmds=cmds, log_file="test.log", keep_alive=True)
+    
+    elif calc_style == "flare":
+        from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
+        sys.exit("not implemented yet")
+
+    elif calc_style == "mace":
+        from mace.calculators import MACECalculator
+        calc = MACECalculator(model_path=model_file, device='cpu') #hard-coded device for now
+    
+    elif calc_style == "mace_mp":
+        from mace.calculators import mace_mp
+        calc = mace_mp()
+
+    elif calc_style == "nequip":
+        sys.exit("not implemented yet")
+    
+    else:
+        sys.exit(calc_style+" is not a known calc type")
+    
+    return calc
+
+
+def main(config_file):
 
     #load config.yml settings 
-    with open(config,'r') as f:
+    with open(config_file,'r') as f:
         setup = yaml.safe_load(f)
     
     #get ab-initio data and physical system data
@@ -711,35 +746,10 @@ def main(config):
     compute_excess_energy = setup.get('compute_exces_energy', False)
 
     #init calculator
-    if setup["calculator"] == "flare_lammps":
-        from lammps import lammps as lmp
-        from ase.calculators.lammpslib import LAMMPSlib #ideally, for all potentials, in fact, use direct calculators
-        #lammps+flare commands
-        cmds= ["pair_style flare",
-            "pair_coeff * * "+setup["model_file"]]
-        #a common calculator for the entire program - some things don't work otherwise
-        calc = LAMMPSlib(lmpcmds=cmds, log_file="test.log", keep_alive=True)
-    
-    elif setup["calculator"] == "flare":
-        from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
-        sys.exit("not implemented yet")
-
-    elif setup["calculator"] == "mace":
-        from mace.calculators import MACECalculator
-        calc = MACECalculator(model_path=setup["model_file"], device='cpu') #hard-coded device for now
-    
-    elif setup["calculator"] == "mace_mp":
-        from mace.calculators import mace_mp
-        calc = mace_mp()
-
-    elif setup["calculator"] == "nequip":
-        sys.exit("not implemented yet")
-    
-    else:
-        sys.exit(setup["calculator"]+" is not a known calc type")
+    calc = get_calc(setup)
 
     #error metric
-    err_method = setup.get('err_method','mae') #default to mae
+    err_method = setup.get('err_method', 'mae') #default to mae
 
     #compute bulk&surface values
     print('computing dft properties')
