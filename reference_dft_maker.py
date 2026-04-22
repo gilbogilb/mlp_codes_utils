@@ -293,6 +293,8 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
         'control': {
             'calculation': 'relax',
             'pseudo_dir': pseudo_dir,
+            'tstress': True,
+            'tprnfor': True
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
