@@ -8,6 +8,7 @@ import yaml
 import numpy as np
 import sys
 from pathlib import Path
+import time
 
 from ase import Atoms
 from ase.units import kJ, fs
@@ -17,7 +18,6 @@ from ase.cluster import Icosahedron as ih, Octahedron as oh, Decahedron as dh
 from ase.io import write, read
 from ase.eos import EquationOfState as eos
 from ase.optimize import LBFGS
-import time
 from ase.md.langevin import Langevin
 from ase.constraints import FixAtoms
 
@@ -26,7 +26,6 @@ from ase.constraints import FixAtoms
 #add output folder
 #try su stresses
 #extend to more than one chemical specie
-#add phonons?
 
 try:
     from tqdm import tqdm
@@ -102,7 +101,7 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
 
     return bulk_properties
 
-def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(2,2,7), vacuum=6.5, relax=True, relax_layers=2):
+def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8), vacuum=6.5, relax=True, relax_layers=2):
     """
     Compute surface energy of fcc low index surfaces (111) (110) (100).
     

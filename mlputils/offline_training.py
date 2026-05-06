@@ -31,8 +31,8 @@ from ase.io import read,write
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 
-from makesets import *
-from benchmark import compute_test_errors
+from mlputils.makesets import *
+from mlputils.benchmark import compute_test_errors
 
 try:
     from tqdm import tqdm

@@ -1,0 +1,28 @@
+[project]
+name = "mlputils"
+description = "tools to train and test machine learning potentials"
+readme = "README.md"
+authors = [{name="Gilberto Nardi", email="gilberto.nardi@unimi.it"}]
+dynamic = ["version"]
+
+dependencies = [
+  "ase",
+  "numpy",
+  "pyyaml"
+]
+
+[project.optional-dependencies]
+extras = [
+  "phonopy",
+  "mir-flare",
+  "mace",
+  "scipy"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mlputils*"]
+exclude = ["workflows_examples*"]
