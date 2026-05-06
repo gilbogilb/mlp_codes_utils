@@ -236,6 +236,8 @@ def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax):
         'control': {
             'calculation': 'vc-relax',
             'pseudo_dir': pseudo_dir,
+            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat
+            'forc_conv_thr': parameters_relax.get('force_conv_thr')
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
@@ -302,7 +304,9 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
             'calculation': 'relax',
             'pseudo_dir': pseudo_dir,
             'tstress': True,
-            'tprnfor': True
+            'tprnfor': True,
+            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat
+            'forc_conv_thr': parameters_relax.get('force_conv_thr')
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
@@ -339,6 +343,8 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
         'control': {
             'calculation': 'relax',
             'pseudo_dir': pseudo_dir,
+            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat
+            'forc_conv_thr': parameters_relax.get('force_conv_thr')
         },
         'system': {
             'ecutwfc': parameters_relax.get('ecutwfc'),
@@ -479,7 +485,7 @@ def input_phonons(symbol,
     k_conv_cell = parameters.get('kpts')
     koff = parameters.get('koffset', 0)
 
-    for i, supercell in enumerate(phonon.supercell_with_displacements):
+    for i, supercell in enumerate(phonon.supercells_with_displacements):
 
         atoms = Atoms(cell=supercell.cell, numbers=supercell.numbers, positions=supercell.positions, pbc=True)
 
