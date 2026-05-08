@@ -14,6 +14,7 @@ from ase.units import Rydberg as ry
 from ase.units import kJ
 from ase.eos import EquationOfState
 from ase.spacegroup import crystal
+from ase.constraints import FixAtoms
 
 import numpy as np
 
@@ -279,7 +280,7 @@ def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
 
     return [kx, ky, 1]
 
-def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), relax=True ):
+def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), relax=True, relax_layers=2 ):
     #writes quantum espresso inputs for relax calculations of surfaces
     #fcc 111 110 100 with dft parameters from parameters_relax.
     #Structures are created with the initial lattice constant parameters_relax[latticeconstant][symbol]
@@ -305,6 +306,16 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), r
     k100 = kpts_surf_calculator(s100.get_cell(), kpts_equiv, ref_lattice)
 
     nat = len(s111)
+
+    if relax:
+        for surf in [s111, s110, s100]:    
+            #fix deep bulk atoms
+            layers_ids = surf.get_tags()
+            min_id, max_id = 1, max(layers_ids)
+            min_id_fix, max_id_fix = min_id + relax_layers, max_id - relax_layers
+            mask = [True if (lay_id>=min_id_fix and lay_id<=max_id_fix) else False for lay_id in layers_ids ]
+            c = FixAtoms(mask=mask)
+            surf.set_constraint(c)
 
     input_data = {
         'control': {
