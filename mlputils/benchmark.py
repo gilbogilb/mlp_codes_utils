@@ -101,7 +101,7 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
 
     return bulk_properties
 
-def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8), vacuum=6.5, relax=True, relax_layers=2):
+def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8), vacuum=6.5, relax=True, relax_layers=2, fmax=1e-5):
     """
     Compute surface energy of fcc low index surfaces (111) (110) (100).
     
@@ -123,8 +123,10 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
     relax:
         True (default) if the structure should be relaxed. Only the first relax_layers on each side are relaxed, the rest of the atoms are kept fixed.
     relax_layers:
-        number of layers to be relaxed.
-
+        number of layers to be relaxed, starting on each side. The remaining ones will be fixed in place
+    fmax:
+        force tolerance for optimization. default to 1e-5 in ase units.
+        
     Returns a dictionary with the computed properties.
     """
 
@@ -147,7 +149,7 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
         bulkfcc.calc = calc
         if relax:
             dyn2 = LBFGS(bulkfcc,logfile="bfgs.log")
-            dyn2.run(fmax=1e-5)
+            dyn2.run(fmax=fmax)
         e_bulk = bulkfcc.get_potential_energy()/len(bulkfcc)
 
     for surfact, surfname in zip(surfactories.values(), surfactories.keys()):
@@ -170,15 +172,16 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
 
             #relax the structure(s)
             dyn = LBFGS(surf,logfile="bfgs.log")
-            dyn.run(fmax=1e-5)
+            dyn.run(fmax=fmax)
 
         #compute surface energy
         cell    = surf.get_cell()
         surface = np.linalg.norm(np.cross(cell[0],cell[1]))
         poten   = surf.get_potential_energy()
         surfen  = (poten - e_bulk*len(surf))/(2.*surface)*16.02
-        surface_properties[surfname]=dict({"gamma":float(surfen)})
+        surface_properties[surfname]=dict({"gamma":float(surfen), "slab_energy": float(poten)})
 
+    surface_properties['ecoh_for_surface_energy'] = e_bulk
     return surface_properties
 
 def eos_fcc_large_test(symbol, calc, alat, pmppercent=100.):

@@ -20,6 +20,7 @@ import numpy as np
 import sys
 import os
 import glob
+import re
 
 #convergence study makers
 def convergence_ewfc_input_maker(symbol, 
@@ -278,12 +279,18 @@ def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
 
     return [kx, ky, 1]
 
-def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
+def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), relax=True ):
     #writes quantum espresso inputs for relax calculations of surfaces
     #fcc 111 110 100 with dft parameters from parameters_relax.
     #Structures are created with the initial lattice constant parameters_relax[latticeconstant][symbol]
     #and kpts are rescaled to have the equivalent of parameters_relax[kpts] points in the conventional
     #fcc cell per planar direction
+    #add fixed middle layers
+
+    if relax:
+        mode='relax'
+    else:
+        mode='scf'
 
     ref_lattice = parameters_relax.get('latticeconstant')[symbol]
     kpts_equiv  = parameters_relax.get('kpts')
@@ -301,7 +308,7 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8) ):
 
     input_data = {
         'control': {
-            'calculation': 'relax',
+            'calculation': mode,
             'pseudo_dir': pseudo_dir,
             'tstress': True,
             'tprnfor': True,
@@ -499,14 +506,19 @@ def input_phonons(symbol,
 
 
 #parsing functions
-def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
+def parse_qe_results(symbol, E_iso_ry=None, directory="."):
     """
     Parse Quantum ESPRESSO output files and compute:
     - E_iso: energy of isolated atom
     - fcc_lattice_constant: equilibrium lattice constant from EOS fit
     - cohesive_energy: cohesive energy per atom
     - Bulk_modulus: from EOS fit
-    - 111/110/100 surface energies
+    - 111/110/100 surface energies (for all layer configurations found)
+    
+    Writes output files:
+    - {symbol}_eos.dat: lattice constant vs energy
+    - {symbol}_dimer_dft.dat: dimer separation vs energy
+    - {symbol}_{miller}_layers.dat: number of layers vs surface energy for each surface type
     """
     results = {}
 
@@ -540,58 +552,95 @@ def parse_qe_results(symbol, E_iso_ry=None, directory=".", surf_size='1x1x8'):
             print(f'Could not read {fname}: {e}')
 
     #fit
-    eos = EquationOfState(volumes, energies, eos="murnaghan")
-    v0, e0, B = eos.fit()
+    if len(volumes)>0:
+        eos = EquationOfState(volumes, energies, eos="murnaghan")
+        v0, e0, B = eos.fit()
 
-    #do some conversions
-    a0 = (4 * v0/len(atoms)) ** (1 / 3)
-    results["fcc_lattice_constant"] = float(a0)
-    results["a0_eos"] = float(a0)
-    # Bulk modulus: ASE returns it in eV/Å^3, convert to GPa
-    results["Bulk_modulus"] = float(B / kJ * 1e24)
+        #do some conversions
+        a0 = (4 * v0/len(atoms)) ** (1 / 3)
+        results["fcc_lattice_constant"] = float(a0)
+        results["a0_eos"] = float(a0)
+        # Bulk modulus: ASE returns it in eV/Å^3, convert to GPa
+        results["Bulk_modulus"] = float(B / kJ * 1e24)
 
-    #write e0 from eos
-    results["ecoh_eos"] = float(e0/len(atoms)-E_iso)
+        #write e0 from eos
+        results["ecoh_eos"] = float(e0/len(atoms)-E_iso)
 
-    #write eos to file
-    alats = [(4*v/len(atoms)) ** (1/3) for v in volumes]
-    np.savetxt(f'{symbol}_eos.dat', np.column_stack((alats, energies)))
-    results['eos_file'] = f'{symbol}_eos.dat'
+        #write eos to file
+        alats = [(4*v/len(atoms)) ** (1/3) for v in volumes]
+        np.savetxt(f'{symbol}_eos.dat', np.column_stack((alats, energies)))
+        results['eos_file'] = f'{symbol}_eos.dat'
+    else:
+        print('No eos configurations found! skipping eos fitting...')
 
+    # parse data from bulk cell relaxation
     # Use the relaxed bulk as reference
-    bulk_relax = read(os.path.join(directory, f"{symbol}_fcc_relax.pwo"))
-    N_bulk = len(bulk_relax)
-    E_bulk = bulk_relax.get_potential_energy()
-    E_coh = (E_bulk / N_bulk) - E_iso
-    results["cohesive_energy"] = float(E_coh)
-    results["ecoh_relax"] = float(E_coh)
-    results["a0_relax"] = float( bulk_relax.get_cell().volume ** (1./3.)   )
+    try:
+        bulk_relax = read(os.path.join(directory, f"{symbol}_fcc_relax.pwo"))
+        N_bulk = len(bulk_relax)
+        E_bulk = bulk_relax.get_potential_energy()
+        E_coh = (E_bulk / N_bulk) - E_iso
+        results["cohesive_energy"] = float(E_coh)
+        results["ecoh_relax"] = float(E_coh)
+        results["a0_relax"] = float( bulk_relax.get_cell().volume ** (1./3.)   )
+    except Exception as e:
+        print(f'Could not get data for the bulk relaxation calculation: {e}')
 
     # --- Surface energies ---
     # Surface energy = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
     # Factor 2 because slab has two surfaces
     E_bulk_per_atom = E_bulk / N_bulk
 
-    surface_tags = {
-        "111": f"{symbol}_surf_111_{surf_size}_relax.pwo",
-        "110": f"{symbol}_surf_110_{surf_size}_relax.pwo",
-        "100": f"{symbol}_surf_100_{surf_size}_relax.pwo",
-    }
-
-    for miller, fname in surface_tags.items():
-        try:
-            slab = read(os.path.join(directory, fname))
-            N_slab = len(slab)
-            E_slab = slab.get_potential_energy()
-            cell = slab.get_cell()
-            # Surface area from cross product of two in-plane lattice vectors
-            A = np.linalg.norm(np.cross(cell[0], cell[1]))
-            E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
-            # Convert eV/Å^2 to J/m^2
-            E_surf_Jm2 = E_surf * 16.0218
-            results[f"{miller}_surface_energy"] = float(E_surf_Jm2)
-        except Exception as e:
-            print(f'Could not read {fname}: {e}')
+    # Compute surface energies for multiple layer configurations
+    import re
+    
+    for miller in ["111", "110", "100"]:
+        surface_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_surf_{miller}_*.pwo")))
+        layers_list = []
+        energies_list = []
+        
+        for fname in surface_files:
+            try:
+                # Extract number of layers from filename
+                # Pattern: {symbol}_surf_{miller}_{nx}x{ny}x{nlayers}_relax.pwo
+                basename = os.path.basename(fname)
+                match = re.search(r'_(\d+)x(\d+)x(\d+)_relax\.pwo', basename)
+                if match:
+                    nx, ny, nlayers = map(int, match.groups())
+                else:
+                    print(f'Warning: Could not extract layer count from {basename}')
+                    continue
+                
+                slab = read(fname)
+                N_slab = len(slab)
+                E_slab = slab.get_potential_energy()
+                cell = slab.get_cell()
+                # Surface area from cross product of two in-plane lattice vectors
+                A = np.linalg.norm(np.cross(cell[0], cell[1]))
+                E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
+                # Convert eV/Å^2 to J/m^2
+                E_surf_Jm2 = E_surf * 16.0218
+                
+                layers_list.append(int(nlayers))
+                energies_list.append(E_surf_Jm2)
+                
+            except Exception as e:
+                print(f'Could not read {fname}: {e}')
+        
+        # Save surface energy data if any files were found
+        if layers_list:
+            # Sort by number of layers
+            sorted_data = sorted(zip(layers_list, energies_list), key=lambda x: x[0])
+            layers_list, energies_list = zip(*sorted_data)
+            
+            # Write to file
+            outfile = f'{symbol}_{miller}_layers.dat'
+            np.savetxt(outfile, np.column_stack((layers_list, energies_list)))
+            results[f"{miller}_surface_energy_file"] = outfile
+            
+            # Also store average for quick reference
+            avg_energy = np.mean(energies_list)
+            results[f"{miller}_surface_energy"] = float(avg_energy)
 
     # --- dimers ---
     dimers_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_dimer_*.pwo")))
@@ -662,21 +711,87 @@ def write_all_inputs(args): #args=sys.argv
     input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
     input_dimers(symbol, separation_range=(alat_0/1.412*0.65, alat_0/1.412*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters, smearing_divider=100.)
 
+def plot_references(symbol, in_path=None, directory='.'):
+    """
+    A function to plot all kinds of reference values in one place after running parse_qe_results and parse_phonons
+    """
+
+    import matplotlib.pyplot as plt
+
+    #First, load all data
+
+    #get parsed data
+    if in_path is None:
+        in_path = f"{symbol}_reference_data.yaml"
+
+    with open(in_path, 'r') as f:
+        parsed_data = yaml.safe_load(f)
+
+    #EOS
+    try:
+        alats_eos, energies_eos = np.loadtxt(parsed_data.get('eos_file'), unpack=True)
+        eos=True
+    except Exception as e:
+        print(f'Did not work with {symbol}_eos.dat: {e}')
+        eos=False
+    
+    #surface energies vs layers curves
+    try:
+        layers_111, energies_111 = np.loadtxt(parsed_data.get("111_surface_energy_file"), unpack=True)
+        layers_110, energies_110 = np.loadtxt(parsed_data.get("110_surface_energy_file"), unpack=True)
+        layers_100, energies_100 = np.loadtxt(parsed_data.get("100_surface_energy_file"), unpack=True)
+        surf = True
+    except Exception as e:
+        print(f'Did not work with {parsed_data.get("111_surface_energy_file")} & co.: {e}')
+        surf = False
+
+    #plot
+    fig, axs = plt.subplots(2,2)
+
+    #eos
+    if eos:
+        axs[0,0].plot(alats_eos, energies_eos)
+        axs[0,0].set_title('Equation of state')
+        eos_text = f"ecoh: {parsed_data.get('cohesive_energy'):.3d} eV\nalat: {parsed_data.get('a0_eos'):.3d} Ang.\n   B: {parsed_data.get('Bulk_modulus'):.3d} GPa."
+        x_text = (alats_eos[0] + alats_eos[-1])/2.
+        y_text = energies_eos[0]
+        axs[0,0].text(x_text,y_text,eos_text)
+
+    if surf:
+        axs[0,1].plot(layers_100, energies_100, label='100')
+        axs[0,1].plot(layers_110, energies_110, label='110')
+        axs[0,1].plot(layers_111, energies_111, label='111')
+
+        axs[0,1].legend()
+
+        axs[0,1].set_title('Surface energies')
+    
+    plt.show()
+    
+
+
 if __name__=='__main__':
 
-    if len(sys.argv)<2 or (not (sys.argv[1]=='input' or sys.argv[1]=='parse')):
+    if len(sys.argv)<2 or (not (sys.argv[1]=='input' or sys.argv[1]=='parse' or sys.argv[1] == 'plot')):
         print(f'USAGE: {sys.argv[0]} <mode> <args>')
         print('--------------------------')
         print('if <mode>==input, args should be: <chemical_symbol> <vacuum_for_surfaces_and_clusters> <pseudopotenials_directory>')
         print('and parameters.yml and parameters_relax.yml should be present in the execution folder.')
         print('--------------------------')
         print('if <mode>==parse, args should be: <chemical_symbol> [isolated_atom_energy_in_Rydberg - optional]')
+        print('--------------------------')
+        print('if <mode> == "plot", args should be: <chemical_symbol>')
 
     if sys.argv[1] == 'input':
         write_all_inputs(sys.argv)
     
     elif sys.argv[1] == 'parse':
-        if len(sys.argv)>2:
+        if len(sys.argv)>3:
             parse_qe_results(symbol=sys.argv[2], E_iso_ry=float(sys.argv[3]) )
         else:
             parse_qe_results(symbol=sys.argv[2])
+        
+        parse_phonons(sorted(glob.glob(f"{sys.argv[2]}_phonopy_structure_*.pwo")), f"{sys.argv[2]}_phonopy.yaml")
+
+    elif sys.argv[1] == 'plot':
+        plot_references(sys.argv[2])
