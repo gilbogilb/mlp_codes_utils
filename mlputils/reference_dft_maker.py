@@ -1,8 +1,8 @@
 #get DFT parameters from a yaml file
 #write inputs
 #run pw.x from bash
-
-# add offsets!
+# OR
+# parse results from calcualtions
 
 import yaml
 
@@ -23,7 +23,10 @@ import os
 import glob
 import re
 
-#convergence study makers
+################################
+### convergence study makers ###
+################################
+
 def convergence_ewfc_input_maker(symbol, 
                                  alat, 
                                  pseudo_dir,
@@ -152,14 +155,54 @@ def convergence_kpoints_smearing_input_maker(symbol,
 
     return
 
-#dft benchmarks makers
-def input_iso(symbol, pseudo_dir, parameters, vacuum=10.0, smearing_divider=1.0):
+
+#############################
+### dft benchmarks makers ###
+#############################
+
+def input_from_yaml(parameters, nat, pseudo_dir, calc_type='scf', electron_maxstep=500, mixing_mode='plain'):
+    """
+    standard input_data maker from a yaml file. A few extra args are available, with default values.
+    nat: number of atoms in the system (energy convergence thresholds are extensive)
+    pseudo_dir: directory in which you have psuedopotential files   
+
+    """
+
+    input_data = {
+        'control': {
+            'calculation': calc_type,
+            'pseudo_dir': pseudo_dir,
+            'tstress': True,
+            'tprnfor': True,
+            'etot_conv_thr': parameters.get('etot_conv_thr_eV_peratom',1e-4)/ry*nat, #not used if not relaxing
+            'forc_conv_thr': parameters.get('forc_conv_thr', 1e-3)                   #not used if not relaxing
+        },
+        'system': {
+            'ecutwfc': parameters.get('ecutwfc'),
+            'ecutrho': parameters.get('ecutwfc')*parameters.get('dual'),
+            'occupations': 'smearing',
+            'smearing': parameters.get('smearing', 'mv'),
+            'degauss': parameters.get('degauss_eV')/ry,
+        },
+        'electrons': {
+            'mixing_beta': parameters.get('mixing_beta', 0.7),
+            'electron_maxstep': electron_maxstep,
+            'mixing_mode': mixing_mode,
+            'conv_thr': parameters.get('econv_eV_peratom')/ry*nat
+        },
+    }
+
+    return input_data
+
+def input_iso(symbol, pseudo_dir, parameters, nspin=2, starting_magnetization=1.0, vacuum=10.0, smearing_divider=1.0, mixing_beta=None):
     #writes input for a spin-polarized calculation of an isolated atom.
     #vacuum can be passed as an argument or in the parameters file.
     #given that convergence is sometimes hard to reach, delicate parameters
     #are chosen and ideally i would like to perform a first looser calculation
     #and a second more precise one starting from the initially computed wfc
     #so this function should write two input files
+    #smearing divider eventually further reduces the smeraing passed from parameters
+    #as large smearing makes convergence very hard
 
     #generate structure
     iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
@@ -168,29 +211,17 @@ def input_iso(symbol, pseudo_dir, parameters, vacuum=10.0, smearing_divider=1.0)
     kpts    = None
     pseudos = parameters.get('pseudos') 
 
-    input_data = {
-        'control': {
-            'calculation': 'scf',
-            'pseudo_dir': pseudo_dir,
-        },
-        'system': {
-            'ecutwfc': parameters.get('ecutwfc'),
-            'ecutrho': parameters.get('dual')*parameters.get('ecutwfc'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry/smearing_divider,
-            'nspin': 2,
-            'starting_magnetization': 1.0
-        },
-        'electrons': {
-            'mixing_beta': 0.05,
-            'electron_maxstep': 1500,
-            'mixing_mode': 'local-TF',
-            'conv_thr': parameters.get('econv_eV_peratom') #just one atom
-            #'starting_pot': 'file'
-            #'starting_wfc': 'file'
-        },
-    }
+    input_data = input_from_yaml(parameters, len(iso_atom), pseudo_dir, electron_maxstep=1500, mixing_mode='local-TF')
+
+    #some case specific options for the input
+    input_data['system']['nspin'] = nspin
+    if nspin == 2:
+        input_data['system']['starting_magnetization'] = starting_magnetization
+
+    input_data['system']['degauss'] = input_data['system']['degauss']/smearing_divider
+
+    if mixing_beta is not None:
+        input_data['electrons']['mixing_beta'] = mixing_beta
 
     write(f'{symbol}_iso.pwi', iso_atom, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
     
@@ -198,66 +229,32 @@ def input_iso(symbol, pseudo_dir, parameters, vacuum=10.0, smearing_divider=1.0)
 
 def input_eos(symbol, alat_0, pseudo_dir, parameters, range_perc=(-3,3), npoints=10):
 
-    k = parameters.get('kpts')
+    k       = parameters.get('kpts')
+    offset  = parameters.get('koffset', 0) 
     pseudos = parameters.get('pseudos')
-
-    input_data = {
-        'control': {
-            'calculation': 'scf',
-            'pseudo_dir': pseudo_dir,
-        },
-        'system': {
-            'ecutwfc': parameters.get('ecutwfc'),
-            'ecutrho': parameters.get('ecutwfc')*parameters.get('dual'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry,
-        },
-        'electrons': {
-            'mixing_beta': 0.4,
-            'electron_maxstep': 500,
-            'mixing_mode': 'TF',
-            'conv_thr': parameters.get('econv_eV_peratom')/ry*4. #cubic fcc cell has 4 atoms
-        },
-    }
 
     alats = np.linspace(alat_0*(1.+range_perc[0]/100.), alat_0*(1.+range_perc[1]/100.), npoints)
 
     for a in alats:
         bulkfcc = bulk(symbol, 'fcc', a, cubic=True)
-        write(f'{symbol}_fcc_{a:.3f}.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos)
+        input_data = input_from_yaml(parameters, len(bulkfcc), pseudo_dir, mixing_mode='TF')
+        write(f'{symbol}_fcc_{a:.3f}.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset = offset)
 
     return
 
-def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax):
+def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters):
 
-    k = parameters_relax.get('kpts')
-    pseudos = parameters_relax.get('pseudos')
-
-    input_data = {
-        'control': {
-            'calculation': 'vc-relax',
-            'pseudo_dir': pseudo_dir,
-            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat,
-            'forc_conv_thr': parameters_relax.get('forc_conv_thr')
-        },
-        'system': {
-            'ecutwfc': parameters_relax.get('ecutwfc'),
-            'ecutrho': parameters_relax.get('ecutwfc')*parameters_relax.get('dual'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters_relax.get('degauss_eV')/ry,
-        },
-        'electrons': {
-            'mixing_beta': 0.4,
-            'electron_maxstep': 500,
-            'mixing_mode': 'TF',
-            'conv_thr': parameters_relax.get('econv_eV_peratom')/ry*4. #cubic fcc cell has 4 atoms
-        },
-    }
+    k       = parameters.get('kpts')
+    offset  = parameters.get('offset', 0)
+    pseudos = parameters.get('pseudos')
 
     bulkfcc = bulk(symbol, 'fcc', alat_0, cubic=True)
-    write(f'{symbol}_fcc_relax.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos)
+
+    nat = len(bulkfcc)
+
+    input_data = input_from_yaml(parameters, nat, pseudo_dir, calc_type='vc-relax', mixing_mode='TF')
+
+    write(f'{symbol}_fcc_relax.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset=offset)
 
     return
 
@@ -280,7 +277,7 @@ def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
 
     return [kx, ky, 1]
 
-def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), relax=True, relax_layers=2 ):
+def input_surfaces(symbol, pseudo_dir, vacuum, parameters, size=(1,1,8), relax=True, relax_layers=2 ):
     #writes quantum espresso inputs for relax calculations of surfaces
     #fcc 111 110 100 with dft parameters from parameters_relax.
     #Structures are created with the initial lattice constant parameters_relax[latticeconstant][symbol]
@@ -293,9 +290,10 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), r
     else:
         mode='scf'
 
-    ref_lattice = parameters_relax.get('latticeconstant')[symbol]
-    kpts_equiv  = parameters_relax.get('kpts')
-    pseudos = parameters_relax.get('pseudos')
+    ref_lattice = parameters.get('latticeconstant')[symbol]
+    kpts_equiv  = parameters.get('kpts')
+    offset      = parameters.get('koffset', 0)
+    pseudos     = parameters.get('pseudos')
 
     s111 = fcc111(symbol, size, a=ref_lattice, vacuum=vacuum)
     s110 = fcc110(symbol, size, a=ref_lattice, vacuum=vacuum)
@@ -307,9 +305,10 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), r
 
     nat = len(s111)
 
+    #fix deep bulk atoms
     if relax:
         for surf in [s111, s110, s100]:    
-            #fix deep bulk atoms
+            
             layers_ids = surf.get_tags()
             min_id, max_id = 1, max(layers_ids)
             min_id_fix, max_id_fix = min_id + relax_layers, max_id - relax_layers
@@ -317,45 +316,23 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax, size=(1,1,8), r
             c = FixAtoms(mask=mask)
             surf.set_constraint(c)
 
-    input_data = {
-        'control': {
-            'calculation': mode,
-            'pseudo_dir': pseudo_dir,
-            'tstress': True,
-            'tprnfor': True,
-            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat,
-            'forc_conv_thr': parameters_relax.get('forc_conv_thr')
-        },
-        'system': {
-            'ecutwfc': parameters_relax.get('ecutwfc'),
-            'ecutrho': parameters_relax.get('ecutwfc')*parameters_relax.get('dual'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters_relax.get('degauss_eV')/ry,
-        },
-        'electrons': {
-            'mixing_beta': 0.4,
-            'electron_maxstep': 500,
-            #'mixing_mode': 'TF',
-            'conv_thr': parameters_relax.get('econv_eV_peratom')/ry*nat
-        },
-    }
+    input_data = input_from_yaml(parameters, nat, pseudo_dir, calc_type=mode)
 
-    write(f'{symbol}_surf_111_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s111, kpts=k111, pseudopotentials=pseudos, input_data=input_data)
-    write(f'{symbol}_surf_110_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s110, kpts=k110, pseudopotentials=pseudos, input_data=input_data)
-    write(f'{symbol}_surf_100_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s100, kpts=k100, pseudopotentials=pseudos, input_data=input_data)    
+    write(f'{symbol}_surf_111_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s111, kpts=k111, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
+    write(f'{symbol}_surf_110_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s110, kpts=k110, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
+    write(f'{symbol}_surf_100_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s100, kpts=k100, koffset=offset, pseudopotentials=pseudos, input_data=input_data)    
 
     return
 
-def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
+def input_isomers(symbol, pseudo_dir, vacuum, parameters):
     """
     write inputs for relaxations of ih, dh, oh at 55 and 147 atoms.
-    use parameters_relax to get reference lattice constants.
+    uses parameters_relax to get reference lattice constants.
     """
 
-    ref_lattice = parameters_relax.get('latticeconstant')[symbol]
-    conv_atom   = parameters_relax.get('econv_eV_peratom')
-    pseudos     = parameters_relax.get('pseudos')
+    ref_lattice = parameters.get('latticeconstant')[symbol]
+    pseudos     = parameters.get('pseudos')
+
 
     input_data = {
         'control': {
@@ -387,7 +364,7 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
     octa.center(vacuum=vacuum)
     deca.center(vacuum=vacuum)
 
-    input_data['electrons']['conv_thr'] = conv_atom*55.
+    input_data = input_from_yaml(parameters, len(ico), mixing_mode='local-TF')
 
     write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
     write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
@@ -403,7 +380,7 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters_relax):
     octa.center(vacuum=vacuum)
     deca.center(vacuum=vacuum)
 
-    input_data['electrons']['conv_thr'] = conv_atom*147.
+    input_data = input_from_yaml(parameters, len(ico), mixing_mode='local-TF')
 
     write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
     write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
@@ -415,29 +392,15 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
 
     kpts    = None
     pseudos = parameters.get('pseudos') 
+    nat     = 2
 
-    input_data = {
-        'control': {
-            'calculation': 'scf',
-            'pseudo_dir': pseudo_dir,
-        },
-        'system': {
-            'ecutwfc': parameters.get('ecutwfc'),
-            'ecutrho': parameters.get('dual')*parameters.get('ecutwfc'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters.get('degauss_eV')/ry/smearing_divider,
-        },
-        'electrons': {
-            'mixing_beta': 0.05,
-            'electron_maxstep': 1500,
-            'mixing_mode': 'local-TF',
-            'conv_thr': parameters.get('econv_eV_peratom')*2
-        },
-    }
+    input_data = input_from_yaml(parameters, nat, pseudo_dir, electron_maxstep=1500, mixing_mode='local-TF')
+
+    input_data['electrons']['mixing_beta'] = 0.05
 
     #generate structures
     for d in np.linspace(separation_range[0], separation_range[1], npoints):
+
         dimer = Atoms([symbol]*2, [[0.,0.,0.], [0.,0.,d]])
         dimer.center(vacuum = vacuum) 
 
@@ -516,7 +479,10 @@ def input_phonons(symbol,
     return
 
 
-#parsing functions
+#########################
+### parsing functions ###
+#########################
+
 def parse_qe_results(symbol, E_iso_ry=None, directory="."):
     """
     Parse Quantum ESPRESSO output files and compute:
@@ -603,8 +569,6 @@ def parse_qe_results(symbol, E_iso_ry=None, directory="."):
     E_bulk_per_atom = E_bulk / N_bulk
 
     # Compute surface energies for multiple layer configurations
-    import re
-    
     for miller in ["111", "110", "100"]:
         surface_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_surf_{miller}_*.pwo")))
         layers_list = []
@@ -696,7 +660,10 @@ def parse_phonons(files, phonon_file_in, phonon_file_out='phonopy_params.yaml', 
     return
 
 
-#main wrappers
+#####################
+### main wrappers ###
+#####################
+
 def write_all_inputs(args): #args=sys.argv
 
     if len(args)<4:
@@ -780,6 +747,9 @@ def plot_references(symbol, in_path=None, directory='.'):
     plt.show()
     
 
+#################
+### main code ###
+#################
 
 if __name__=='__main__':
 
@@ -797,12 +767,14 @@ if __name__=='__main__':
         write_all_inputs(sys.argv)
     
     elif sys.argv[1] == 'parse':
+        symbol = sys.argv[2]
         if len(sys.argv)>3:
-            parse_qe_results(symbol=sys.argv[2], E_iso_ry=float(sys.argv[3]) )
+            parse_qe_results(symbol, E_iso_ry=float(sys.argv[3]) )
         else:
-            parse_qe_results(symbol=sys.argv[2])
+            parse_qe_results(symbol)
         
-        parse_phonons(sorted(glob.glob(f"{sys.argv[2]}_phonopy_structure_*.pwo")), f"{sys.argv[2]}_phonopy.yaml")
+        parse_phonons(sorted(glob.glob(f"{symbol}_phonopy_structure_*.pwo")), f"{symbol}_phonopy.yaml")
 
-    elif sys.argv[1] == 'plot':
-        plot_references(sys.argv[2])
+    elif sys.argv[1] == 'plot': #deprecated
+        symbol = sys.argv[2]
+        plot_references(symbol)

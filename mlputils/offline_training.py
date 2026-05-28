@@ -2,7 +2,7 @@
 #some code by davide alimonti
 #extensions: #add stress in ase2flare?
 #add stress error
-#take care with randomness - here, np.radnom is used, should set the seed in np as well;
+#take care with randomness - here, np.random is used, should set the seed in np as well;
 
 import numpy as np
 from scipy.optimize import minimize
@@ -436,6 +436,17 @@ def get_dft_data(conf):
     return dft_energy, dft_forces, flare_stress
 
 
+def add_envs(json_file, atoms, indices, json_file_out):
+
+    flare_calc, kernels = model_from_dict(json_file)
+    flare_atoms = FLARE_Atoms.from_ase_atoms(atoms, copy_calc_results=True)
+    energy, forces, stress = get_dft_data(atoms)
+    flare_calc.gp_model.update_db(flare_atoms, forces=forces, energy=energy, stress=stress, custom_range=indices)
+
+    flare_calc.build_map()
+    flare_calc.write_model(json_file_out)
+
+
 def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
@@ -532,7 +543,7 @@ def train_offline(config, train_set, test_set):
             sparse_indices.append(indices.tolist())
             conf.info["sparse_set"] = np.array(indices)
             training_structures.append(conf)
-            file_log.write('initialized gp with random enviornments: atoms' + np.array2string(indices) + '\n')
+            file_log.write('initialized gp with random environments: atoms' + np.array2string(indices) + '\n')
             file_log.flush()
 
             #end first step

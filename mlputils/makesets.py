@@ -166,7 +166,7 @@ def sort_by_cnap_number(frames, cutoff, pbc=True):
     sort by the number of distinct cnaps normalized by the number of atoms in the system.
     """
     
-    from snow.descriptors.cna import cna_peratom, cnap_peratom
+    from snow.descriptors.cna import cna_peratom
 
     cnap_ratios = np.zeros(len(frames))
     
@@ -190,10 +190,16 @@ def sort_by_cnap_number(frames, cutoff, pbc=True):
 
     return sorted_frames, cnap_ratios[ids], ids
 
-
 def split_bulk_surf_clust(atoms):
     """attempt separating different structures (bulk, surfaces, clusters) based
-    on the number density of atoms (generally three ranges are present)"""
+    on the number density of atoms (generally three ranges are present)
+    
+    notice: this generally works if you have performed DFT calculations with plane waves, 
+    so you have to include vacuum and the amount of total vaucum depends on the configuration type
+    
+    This sometimes does not work. check it out
+    """
+
     bulk, surf, clust = [], [], []
     densities = []
     for a in atoms:

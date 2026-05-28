@@ -3,3 +3,4 @@ __pycache__/
 tests/
 *egg-info
 workflows_examples/*.log
+build/

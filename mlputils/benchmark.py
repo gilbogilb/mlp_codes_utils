@@ -684,15 +684,47 @@ def predict_configs(calc, e_iso_ref, files_to_predict, ref_cohesive_energy=None)
 
     return results
 
+
+def make_energy_differences_matrix(calc, e_iso_ref, dataset):
+
+    ref_energies   = np.zeros(len(dataset))
+    model_energies = np.zeros(len(dataset))
+
+    configs = read(dataset)
+
+    for i, atoms in enumerate(configs):
+        
+        ref_energies[i] = float(atoms.get_potential_energy() - len(atoms)*e_iso_ref)
+        
+        atoms.calc = calc
+
+        symbol = atoms.get_chemical_symbols()[0]
+        iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        e_iso_model = iso_atom.get_potential_energy()
+
+        model_energies[i] = float(atoms.get_potential_energy() - len(atoms)*e_iso_model)
+
+    # Pairwise differences
+    ref_diff = ref_energies[:, None] - ref_energies[None, :]
+
+    model_diff = model_energies[:, None] - model_energies[None, :]
+
+    # Difference between the two matrices
+    diff_error = ref_diff - model_diff
+
+    return diff_error, ref_diff, model_diff
+
 def compute_phonons(calc,
-                    dispalcement_distance=0.02,
+                    displacement_distance=0.02,
                     phonon_file_in=None, 
                     ase_crystal=None, #primitive cell!
-                    out_file_phonon_name='phonon', 
-                    out_file_bands_name='bands',
+                    out_file_phonon_name='phonon_mlp.yaml', 
+                    out_file_bands_name='bands_mlp.yaml',
                     **argv):
     """
-    create a phononpy object by either reading it from file or generating it from zero.
+    create a phonopy object by either reading it from file or generating it from zero.
     Then, use the provided calculator to compute phonons. the phonon object and the bands are written to the provided output files"""
 
     if phonon_file_in is None and ase_crystal is None:
@@ -713,7 +745,7 @@ def compute_phonons(calc,
     else:
         sys.exit('generating our own phonon file is not implemented yet.')
     
-    phonon.generate_displacements(distance = dispalcement_distance)
+    phonon.generate_displacements(distance = displacement_distance)
     forces = []
 
     for i, supercell in enumerate(phonon.supercells_with_displacements):
@@ -786,6 +818,8 @@ def main(config_file):
 
     test_set_files=setup.get('test_set_file', None)
 
+    phonon_ref_file = setup.get('phonon_file', None)
+
     #two optional longer tests
     compute_performance   = setup.get('compute_performance', False)
     compute_excess_energy = setup.get('compute_exces_energy', False)
@@ -815,7 +849,11 @@ def main(config_file):
     properties['fcc_bulk']['B_rel_error']  = B_p
     properties['fcc111']['rel_error'] = g1_p
     properties['fcc110']['rel_error'] = g2_p
-    properties['fcc100']['rel_error'] = g3_p        
+    properties['fcc100']['rel_error'] = g3_p       
+
+    #phonons
+    if phonon_ref_file is not None:
+        compute_phonons(calc, phonon_file_in=phonon_ref_file) 
 
     #MAE, MAV on test set
     if test_set_files is not None:
