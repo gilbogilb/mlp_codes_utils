@@ -690,7 +690,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     ref_energies   = np.zeros(len(dataset))
     model_energies = np.zeros(len(dataset))
 
-    configs = read(dataset)
+    configs = read(dataset, index=':)
 
     for i, atoms in enumerate(configs):
         
