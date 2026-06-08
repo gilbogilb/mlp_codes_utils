@@ -5,3 +5,4 @@ tests/
 *egg-info
 workflows_examples/*.log
 build/
+.vscode/

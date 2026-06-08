@@ -223,7 +223,13 @@ def split_bulk_surf_clust(atoms):
         return best_split
 
     # Find two split points dividing densities into three groups
+    if len(sorted_dens) < 2:
+        return atoms, [], []
+
     split1 = find_split(sorted_dens)
+    if split1 is None:
+        return atoms, [], []
+
     lower = [v for v in sorted_dens if v < split1]
     upper = [v for v in sorted_dens if v >= split1]
     split2 = find_split(upper) if len(upper) > 1 else None
@@ -263,7 +269,7 @@ def make_sets(config):
     if style == "injected":
 
         injection_frequency = config.get('injection_frequency', 4)
-        stop_inject         = config.get('stop_ionject', 60)
+        stop_inject         = config.get('stop_inject', 60)
 
         files = config.get('bulk_files') + config.get('surf_files') + config.get('clusters_files')
         train, test, _ = make_sparsely_injected_sets(files, 
@@ -327,5 +333,6 @@ def make_sets(config):
 
 if __name__ == '__main__':
 
-    config = yaml.safe_load(open(sys.argv[1], 'r'))
+    with open(sys.argv[1], 'r') as f:
+        config = yaml.safe_load(f)
     make_sets(config)

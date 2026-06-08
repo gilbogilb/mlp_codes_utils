@@ -8,15 +8,15 @@ dynamic = ["version"]
 dependencies = [
   "ase",
   "numpy",
-  "pyyaml"
+  "pyyaml",
+  "scipy"
 ]
 
 [project.optional-dependencies]
 extras = [
   "phonopy",
   "mir-flare",
-  "mace",
-  "scipy"
+  "mace"
 ]
 
 [build-system]
