@@ -713,7 +713,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     return diff_error, ref_diff, model_diff
 
 
-def compare_isomers(file, calc, fictitious_temperature=None, k_B = 8.617333262e-5):
+def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617333262e-5):
     """
     Compare energy ordering of isomers between reference data and calculator.
 
@@ -779,10 +779,9 @@ def compare_isomers(file, calc, fictitious_temperature=None, k_B = 8.617333262e-
         calc_probs /= calc_probs.sum()
 
         kl = kl_div(ref_probs, calc_probs)
+        return np.array(ref_energies, dtype=float), np.array(calc_energies, dtype=float), inversions, kl
     else:
-        kl = None
-
-    return inversions, kl
+        return np.array(ref_energies, dtype=float), np.array(calc_energies, dtype=float), inversions
 
 
 def compute_phonons(calc,
