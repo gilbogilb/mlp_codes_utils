@@ -5,6 +5,8 @@
 #take care with randomness - here, np.random is used, should set the seed in np as well;
 
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import huber
 
 import sys
 import time
@@ -171,7 +173,7 @@ def optimize_hyps(gp_model,
     otherwise it will set new hyps to the model
     """
     rollback = False
-    from scipy.optimize import minimize
+    
     initial_guess = gp_model.hyperparameters
     old_hyps      = np.array(initial_guess) # save in case of rollback
     if loss_function_config["name"] == "negative_likelihood":
@@ -226,7 +228,14 @@ def write_to_json(gp_model, power, radial_basis_type,
                   loss_function_config,
                   sparse_indices, training_structures, species_code, files_prefix,
                   author='user'):
+    
+    """
+    Returns a JSON of the model including all necessary data to retrain it.
+    It also produces the maps of the model
+    """
+
     hyperlist = np.array(gp_model.hyperparameters).tolist()
+    #log_errors(gp_model,testsets)
     gp_model.write_mapping_coefficients("lmp.flare", author, 0)
     gp_model.write_sparse_descriptors("sparse_desc_lmp.flare", author)
     gp_model.write_L_inverse("L_inv_lmp.flare", author)
@@ -307,7 +316,7 @@ def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstr
         energy = np.array(struct["results"]["energy"])
         for n in struct["numbers"]:
             coded_species.append(species_code[str(n)])
-            energy[0] -= isolated_energies.get(str(n), 0.0)
+            energy[0] -= isolated_energies.get(str(n))
         flare_structure = Structure(struct["cell"],coded_species,struct["positions"],cutoff,descriptors)
         flare_structure.forces = np.array(struct["results"]["forces"]).reshape(-1)
         flare_structure.energy = energy
@@ -351,8 +360,6 @@ def huber_loss(hyperparameters,gp_model,weights):
     Compute huber loss of the model on its training set given some hyperparameters
     Losses on energies,forces and stresses are then multiplied by weights
     """
-
-    from scipy.special import huber
 
     # Residuals on energies,forces and stresses
     # Initialize empty arrays
@@ -632,7 +639,26 @@ def train_offline(config, train_set, test_set):
 
     return
 
-def model_from_json(json_dict_file):
+def model_from_dict(json_dict_file):
+    #from flare.learners.OTF class
+    #flare_calc_dict = json.load(open(json_dict_file))["flare_calc"]
+
+    # Build FLARE_Calculator from dict
+    #if flare_calc_dict["class"] == "FLARE_Calculator":
+    #     flare_calc = FLARE_Calculator.from_file(json_dict_file)
+    #     _kernels = None
+    #     # Build SGP_Calculator from dict
+    #     # TODO: we still have the issue that the c++ kernel needs to be
+    #     # in the current space, otherwise there is Seg Fault
+    #     # That's why there is the _kernels
+    # elif flare_calc_dict["class"] == "SGP_Calculator":
+    #     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    # else:
+    #     raise TypeError(f"The calculator {json_dict_file} is not recognized.")
+
+
+    #todo: generalize
+
     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
     return flare_calc, _kernels
 
