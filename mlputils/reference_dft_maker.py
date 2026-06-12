@@ -333,28 +333,6 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters):
     ref_lattice = parameters.get('latticeconstant')[symbol]
     pseudos     = parameters.get('pseudos')
 
-
-    input_data = {
-        'control': {
-            'calculation': 'relax',
-            'pseudo_dir': pseudo_dir,
-            'etot_conv_thr': parameters_relax.get('etot_conv_thr_eV_peratom')/ry*nat,
-            'forc_conv_thr': parameters_relax.get('forc_conv_thr')
-        },
-        'system': {
-            'ecutwfc': parameters_relax.get('ecutwfc'),
-            'ecutrho': parameters_relax.get('dual')*parameters_relax.get('ecutwfc'),
-            'occupations': 'smearing',
-            'smearing': 'cold',
-            'degauss': parameters_relax.get('degauss_eV')/ry,
-        },
-        'electrons': {
-            'mixing_beta': 0.4,
-            'electron_maxstep': 700,
-            'mixing_mode': 'local-TF',
-        },
-    }
-
     #55-atoms
     ico  = Icosahedron(symbol, 3, ref_lattice)
     octa = Octahedron(symbol, 5, 2, ref_lattice)
@@ -364,7 +342,7 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters):
     octa.center(vacuum=vacuum)
     deca.center(vacuum=vacuum)
 
-    input_data = input_from_yaml(parameters, len(ico), mixing_mode='local-TF')
+    input_data = input_from_yaml(parameters, len(ico), pseudo_dir, calc_type='relax', mixing_mode='local-TF')
 
     write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
     write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
@@ -380,7 +358,7 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters):
     octa.center(vacuum=vacuum)
     deca.center(vacuum=vacuum)
 
-    input_data = input_from_yaml(parameters, len(ico), mixing_mode='local-TF')
+    input_data = input_from_yaml(parameters, len(ico), pseudo_dir, calc_type='relax', mixing_mode='local-TF')
 
     write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
     write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
@@ -526,7 +504,7 @@ def parse_qe_results(symbol, E_iso_ry=None, directory="."):
             volumes.append(atoms.get_volume())
             energies.append(atoms.get_potential_energy())
         except Exception as e:
-            print(f'Could not read {fname}: {e}')
+            print(f'Could not read {f}: {e}')
 
     #fit
     if len(volumes)>0:
@@ -566,56 +544,61 @@ def parse_qe_results(symbol, E_iso_ry=None, directory="."):
     # --- Surface energies ---
     # Surface energy = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
     # Factor 2 because slab has two surfaces
-    E_bulk_per_atom = E_bulk / N_bulk
+    if 'E_bulk' in dir() and 'N_bulk' in dir():
+        E_bulk_per_atom = E_bulk / N_bulk
+    else:
+        print('Warning: bulk relaxation data not available, skipping surface energies.')
+        E_bulk_per_atom = None
 
     # Compute surface energies for multiple layer configurations
-    for miller in ["111", "110", "100"]:
-        surface_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_surf_{miller}_*.pwo")))
-        layers_list = []
-        energies_list = []
-        
-        for fname in surface_files:
-            try:
-                # Extract number of layers from filename
-                # Pattern: {symbol}_surf_{miller}_{nx}x{ny}x{nlayers}_relax.pwo
-                basename = os.path.basename(fname)
-                match = re.search(r'_(\d+)x(\d+)x(\d+)_relax\.pwo', basename)
-                if match:
-                    nx, ny, nlayers = map(int, match.groups())
-                else:
-                    print(f'Warning: Could not extract layer count from {basename}')
-                    continue
-                
-                slab = read(fname)
-                N_slab = len(slab)
-                E_slab = slab.get_potential_energy()
-                cell = slab.get_cell()
-                # Surface area from cross product of two in-plane lattice vectors
-                A = np.linalg.norm(np.cross(cell[0], cell[1]))
-                E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
-                # Convert eV/Å^2 to J/m^2
-                E_surf_Jm2 = E_surf * 16.0218
-                
-                layers_list.append(int(nlayers))
-                energies_list.append(E_surf_Jm2)
-                
-            except Exception as e:
-                print(f'Could not read {fname}: {e}')
-        
-        # Save surface energy data if any files were found
-        if layers_list:
-            # Sort by number of layers
-            sorted_data = sorted(zip(layers_list, energies_list), key=lambda x: x[0])
-            layers_list, energies_list = zip(*sorted_data)
-            
-            # Write to file
-            outfile = f'{symbol}_{miller}_layers.dat'
-            np.savetxt(outfile, np.column_stack((layers_list, energies_list)))
-            results[f"{miller}_surface_energy_file"] = outfile
-            
-            # Also store average for quick reference
-            avg_energy = np.mean(energies_list)
-            results[f"{miller}_surface_energy"] = float(avg_energy)
+    if E_bulk_per_atom is not None:
+        for miller in ["111", "110", "100"]:
+            surface_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_surf_{miller}_*.pwo")))
+            layers_list = []
+            energies_list = []
+
+            for fname in surface_files:
+                try:
+                    # Extract number of layers from filename
+                    # Pattern: {symbol}_surf_{miller}_{nx}x{ny}x{nlayers}_relax.pwo
+                    basename = os.path.basename(fname)
+                    match = re.search(r'_(\d+)x(\d+)x(\d+)_relax\.pwo', basename)
+                    if match:
+                        nx, ny, nlayers = map(int, match.groups())
+                    else:
+                        print(f'Warning: Could not extract layer count from {basename}')
+                        continue
+
+                    slab = read(fname)
+                    N_slab = len(slab)
+                    E_slab = slab.get_potential_energy()
+                    cell = slab.get_cell()
+                    # Surface area from cross product of two in-plane lattice vectors
+                    A = np.linalg.norm(np.cross(cell[0], cell[1]))
+                    E_surf = (E_slab - N_slab * E_bulk_per_atom) / (2 * A)
+                    # Convert eV/Å^2 to J/m^2
+                    E_surf_Jm2 = E_surf * 16.0218
+
+                    layers_list.append(int(nlayers))
+                    energies_list.append(E_surf_Jm2)
+
+                except Exception as e:
+                    print(f'Could not read {fname}: {e}')
+
+            # Save surface energy data if any files were found
+            if layers_list:
+                # Sort by number of layers
+                sorted_data = sorted(zip(layers_list, energies_list), key=lambda x: x[0])
+                layers_list, energies_list = zip(*sorted_data)
+
+                # Write to file
+                outfile = f'{symbol}_{miller}_layers.dat'
+                np.savetxt(outfile, np.column_stack((layers_list, energies_list)))
+                results[f"{miller}_surface_energy_file"] = outfile
+
+                # Also store average for quick reference
+                avg_energy = np.mean(energies_list)
+                results[f"{miller}_surface_energy"] = float(avg_energy)
 
     # --- dimers ---
     dimers_files = sorted(glob.glob(os.path.join(directory, f"{symbol}_dimer_*.pwo")))

@@ -36,7 +36,7 @@ from mlputils.benchmark import compute_test_errors
 
 try:
     from tqdm import tqdm
-except:
+except ImportError:
     def tqdm(iterable):
         return iterable
 
@@ -173,6 +173,7 @@ def optimize_hyps(gp_model,
     otherwise it will set new hyps to the model
     """
     rollback = False
+    
     initial_guess = gp_model.hyperparameters
     old_hyps      = np.array(initial_guess) # save in case of rollback
     if loss_function_config["name"] == "negative_likelihood":
@@ -221,19 +222,24 @@ def optimize_hyps(gp_model,
 def write_to_json(gp_model, power, radial_basis_type,
                   cutoff_function, cutoff, nspecies, nmax, lmax,
                   opt_method, variance_type, max_iterations,
-                  minhyps, maxhyps,bounds,
-                  sigma_e,sigma_f,sigma_s,sigma,
-                  isolated_energies_mapped, descriptor_type, gtol, loss_function_config, author='user'):
+                  minhyps, maxhyps, bounds,
+                  sigma_e, sigma_f, sigma_s, sigma,
+                  isolated_energies_mapped, descriptor_type, gtol,
+                  loss_function_config,
+                  sparse_indices, training_structures, species_code, files_prefix,
+                  author='user'):
+    
     """
     Returns a JSON of the model including all necessary data to retrain it.
     It also produces the maps of the model
     """
-    hyperlist=np.array(gp_model.hyperparameters).tolist()
+
+    hyperlist = np.array(gp_model.hyperparameters).tolist()
     #log_errors(gp_model,testsets)
-    gp_model.write_mapping_coefficients(f"lmp.flare",author,0)
-    gp_model.write_sparse_descriptors(f"sparse_desc_lmp.flare",author)
-    gp_model.write_L_inverse(f"L_inv_lmp.flare",author)
-    gpmodeldict = dict({"sparse_indices": [sparse_indices], "training_structures": training_structures})
+    gp_model.write_mapping_coefficients("lmp.flare", author, 0)
+    gp_model.write_sparse_descriptors("sparse_desc_lmp.flare", author)
+    gp_model.write_L_inverse("L_inv_lmp.flare", author)
+    gpmodeldict = {"sparse_indices": [sparse_indices], "training_structures": training_structures}
     gpmodeldict["cutoff"] = cutoff
     gpmodeldict["species_map"] = species_code
     gpmodeldict["variance_type"] = variance_type
@@ -247,30 +253,27 @@ def write_to_json(gp_model, power, radial_basis_type,
     gpmodeldict["max_iterations"] = max_iterations
     gpmodeldict["opt_method"] = opt_method
     gpmodeldict["bounds"] = None
-    gpmodeldict["atom_indices"] = [ [-1] for _ in range(len(training_structures))]
-    gpmodeldict["rel_efs_noise"] = [ [1,1,1] for _ in range(len(training_structures))]
+    gpmodeldict["atom_indices"] = [[-1] for _ in range(len(training_structures))]
+    gpmodeldict["rel_efs_noise"] = [[1, 1, 1] for _ in range(len(training_structures))]
     gpmodeldict["hyps"] = hyperlist
-    gpmodeldict["kernels"] = [['NormalizedDotProduct', hyperlist[0]  , 2.0]]
-    gpmodeldict["hyp_labels"] =  ['Hyp0', 'Hyp1', 'Hyp2', 'Hyp3']
+    gpmodeldict["kernels"] = [['NormalizedDotProduct', hyperlist[0], 2.0]]
+    gpmodeldict["hyp_labels"] = ['Hyp0', 'Hyp1', 'Hyp2', 'Hyp3']
     gpmodeldict["sgp_var_flag"] = "new"
 
-    finaldict = dict(
-            {
-                "gp_model" : gpmodeldict,
-                "results" : {},
-                "parameters" : {},
-                "_directory" : ".",
-                "prefix" : None,
-                "name" : "sgp_calculator",
-                "use_mapping" : True,
-                "mgp_model"   : None,
-                "class"       : "SGP_Calculator"
-                })
+    finaldict = {
+        "gp_model": gpmodeldict,
+        "results": {},
+        "parameters": {},
+        "_directory": ".",
+        "prefix": None,
+        "name": "sgp_calculator",
+        "use_mapping": True,
+        "mgp_model": None,
+        "class": "SGP_Calculator"
+    }
 
-
-    with open(f"offline_{files_prefix}.json",'w') as f:
-        json.dump(finaldict,f)
-    return
+    with open(f"offline_{files_prefix}.json", 'w') as f:
+        json.dump(finaldict, f)
 
 
 def initialize_gp(
@@ -287,10 +290,12 @@ def initialize_gp(
     return gp_model_init, descriptors, kernels
 
 
-def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstruct):
+def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstruct, isolated_energies=None):
     """
     Retrain a gp model from a dictionary
     """
+    if isolated_energies is None:
+        isolated_energies = {}
 
     sigma   = hyps[0]
     sigma_e = hyps[1]
@@ -306,20 +311,17 @@ def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstr
     descriptors = [ B2("chebyshev","quadratic",[0,cutoff],[] , [nspecies , nmax, lmax]) ]
     gp_model = SparseGP(kernels, sigma_e, sigma_f ,sigma_s)
 
-    idx=0
-    alldata= len(structuresdict)
     for struct,indices in zip(structuresdict,sparse_indices):
         coded_species=[]
         energy = np.array(struct["results"]["energy"])
         for n in struct["numbers"]:
             coded_species.append(species_code[str(n)])
-            energy[0] -= isolated_energies[str(n)]
+            energy[0] -= isolated_energies.get(str(n))
         flare_structure = Structure(struct["cell"],coded_species,struct["positions"],cutoff,descriptors)
         flare_structure.forces = np.array(struct["results"]["forces"]).reshape(-1)
         flare_structure.energy = energy
         gp_model.add_training_structure(flare_structure)
         gp_model.add_specific_environments(flare_structure,indices)
-        idx += 1
     return gp_model,descriptors,kernels
 
 def ase2dict(struct: Atoms) -> dict :
@@ -438,7 +440,7 @@ def get_dft_data(conf):
 
 def add_envs(json_file, atoms, indices, json_file_out):
 
-    flare_calc, kernels = model_from_dict(json_file)
+    flare_calc, kernels = model_from_json(json_file)
     flare_atoms = FLARE_Atoms.from_ase_atoms(atoms, copy_calc_results=True)
     energy, forces, stress = get_dft_data(atoms)
     flare_calc.gp_model.update_db(flare_atoms, forces=forces, energy=energy, stress=stress, custom_range=indices)
@@ -554,9 +556,13 @@ def train_offline(config, train_set, test_set):
 
             #compute uncertainties
             flare_conf.calc.calculate(atoms=conf, properties='stds')
-            stds = flare_conf.calc.results.get("stds")#, np.zeros_like(forces)) why would i like to have a deafult to 0?
-            
-            if np.max(stds)>call_threshold:
+            stds = flare_conf.calc.results.get("stds")
+            if stds is None:
+                file_log.write(f"Warning: no uncertainties returned for frame {step}\n")
+                step += 1
+                continue
+
+            if np.max(stds) > call_threshold:
                 oracle_calls +=1
 
                 #get high uncertainty configs
@@ -658,7 +664,8 @@ def model_from_dict(json_dict_file):
 
 def main(config_file):
 
-    config = yaml.safe_load(open(config_file, 'r'))
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
 
     train, test = make_sets(config)
     train_offline(config, train, test)

@@ -29,7 +29,7 @@ from ase.constraints import FixAtoms
 
 try:
     from tqdm import tqdm
-except:
+except ImportError:
     def tqdm(iterable, desc=""):
         return iterable
 
@@ -57,10 +57,10 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
 
     #compute energy over a range of latice constants around the putative minimum
     for alat in alats:
-        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) #makes a conventional cell
-        sys.calc = calc
-        poten    = sys.get_potential_energy()
-        vol      = sys.get_volume()
+        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+        atoms.calc = calc
+        poten    = atoms.get_potential_energy()
+        vol      = atoms.get_volume()
         energies.append(poten)
         volumes.append(vol)
 
@@ -70,15 +70,15 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
 
     #recompute with better precision:
     volumes, energies = [], []
-    alat_precise      = (v0/len(sys)*4. )**(1.0 / 3.0)
+    alat_precise      = (v0/len(atoms)*4. )**(1.0 / 3.0)
     bounds            = [alat_precise - pmppercent*alat_precise/100., alat_precise+pmppercent*alat_precise/100.]
     alats             = np.linspace(bounds[0] , bounds[1], 20)
 
     for alat in alats:
-        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
-        sys.calc = calc
-        poten    = sys.get_potential_energy()
-        vol      = sys.get_volume()
+        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+        atoms.calc = calc
+        poten    = atoms.get_potential_energy()
+        vol      = atoms.get_volume()
         energies.append(poten)
         volumes.append(vol)
 
@@ -86,18 +86,17 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     v0, e0, B = eos(volumes,energies,eos='murnaghan').fit()
 
     B  = (B/kJ * 1.0e24)      #bulk modulus - eV/A**3 to GPa conversion
-    a0 = (v0/len(sys)*4. )**(1 / 3.0)  #lattice constant from the volume (normalize per conventional cells)
-    e0 = e0/len(sys) - iso_atom.get_potential_energy()    #potential energy per atom
+    a0 = (v0/len(atoms)*4. )**(1 / 3.0)  #lattice constant from the volume (normalize per conventional cells)
+    e0 = e0/len(atoms) - iso_atom.get_potential_energy()    #potential energy per atom
     bulk_properties["fcc_bulk"]       = dict({})
     bulk_properties["fcc_bulk"]['B']  = float(B)
     bulk_properties["fcc_bulk"]['a0'] = float(a0)
     bulk_properties["fcc_bulk"]['e0'] = float(e0)
 
     #write eos data
-    f = open('eos.dat','w')
-    for a, e in zip(alats, energies):
-        f.write(str(a)+" "+str(e/len(sys))+" \n")
-    f.close()
+    with open('eos.dat','w') as f:
+        for a, e in zip(alats, energies):
+            f.write(str(a)+" "+str(e/len(atoms))+" \n")
 
     return bulk_properties
 
@@ -189,20 +188,20 @@ def eos_fcc_large_test(symbol, calc, alat, pmppercent=100.):
     Only computes and returns lattice constant vs energy for a FCC system. Can be used to look at performance over a wide range
     of lattice constants to look at what happens when you're far from the minimum
     (e.g. to check for ghost holes in your potential).
-    computes energy for FCC over a range of lattice constants going from alat - pmpercent/2./100.*alat to alat + pmpercente*alat/100.
+    computes energy for FCC over a range of lattice constants going from alat - pmpercent/2./100.*alat to alat + pmpercent*alat/100.
     """
 
     lattices, energies = [], []
-    bounds = [alat-pmppercent*alat/100./2., alat+pmppercent/100]
-    alats             = np.linspace(bounds[0] , bounds[1], 40)
+    bounds = [alat-pmppercent*alat/100./2., alat+pmppercent*alat/100./2.]
+    alats  = np.linspace(bounds[0] , bounds[1], 40)
 
     for alat in alats:
-        sys      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1)) 
-        sys.calc = calc
-        poten    = sys.get_potential_energy()
-        vol      = sys.get_volume()
+        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+        atoms.calc = calc
+        poten    = atoms.get_potential_energy()
+        vol      = atoms.get_volume()
         energies.append(poten)
-        lattices.append((vol/len(sys)*4. )**(1 / 3.0))
+        lattices.append((vol/len(atoms)*4. )**(1 / 3.0))
 
     return lattices, energies
 
@@ -274,8 +273,8 @@ def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='
     with errors per test set config to check if any configuration is contributing disproportionally to the MAEs
    """
     
-    if err_method != 'mae' and err_method != 'rmse':
-        sys.exit(f'error: method {err_method} not implemented.')
+    if err_method not in ('mae', 'rmse'):
+        raise ValueError(f'error: method {err_method} not implemented.')
     
     def error(difference, err_method):
         #experimental
@@ -583,24 +582,21 @@ def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, oct
     for geom, name in zip(geometries, names):
 
         print('minimizing',name+'s')
-        stream = open(name+'-exc.dat', 'w')
+        with open(name+'-exc.dat', 'w') as stream:
+            for c in tqdm(geom, desc="warning - this won't be linear"):
 
-        for c in tqdm(geom, desc="warning - this won't be linear"):
+                c.center(vacuum=6.5)
+                c.calc = calc
 
-            c.center(vacuum=6.5)
-            c.calc = calc
+                #relax the structure
+                dyn = LBFGS(c, logfile="bfgs.log")
+                dyn.run(fmax=f_thresh)
 
-            #relax the structure
-            dyn = LBFGS(c, logfile="bfgs.log")
-            dyn.run(fmax=f_thresh)
-
-            #compute excess energy
-            N = len(c)
-            pot_ene = c.get_potential_energy()
-            excess = (pot_ene - N*(ecoh+E_iso_model))/(N**(2./3.))
-            stream.write(f"{N} {pot_ene} {excess}\n")
-
-        stream.close()
+                #compute excess energy
+                N = len(c)
+                pot_ene = c.get_potential_energy()
+                excess = (pot_ene - N*(ecoh+E_iso_model))/(N**(2./3.))
+                stream.write(f"{N} {pot_ene} {excess}\n")
 
     return
 
@@ -690,7 +686,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     ref_energies   = np.zeros(len(dataset))
     model_energies = np.zeros(len(dataset))
 
-    configs = read(dataset, index=':)
+    configs = read(dataset, index=':')
 
     for i, atoms in enumerate(configs):
         
@@ -715,6 +711,78 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     diff_error = ref_diff - model_diff
 
     return diff_error, ref_diff, model_diff
+
+
+def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617333262e-5):
+    """
+    Compare energy ordering of isomers between reference data and calculator.
+
+    For each isomer in the file, the reference energy is read and the
+    calculator energy is computed.  The number of "crossings" (inversions)
+    between the reference ordering and the calculator ordering is returned.
+
+    Parameters
+    ----------
+    file : str
+        Path to a file containing isomers (readable by ase.io.read).
+    calc : ASE calculator
+        Calculator used to compute the energy of each isomer.
+    fictitious_temperature : float or None
+        Optional fictitious temperature for Boltzmann-weighted
+        comparisons via KL divergence (requires pysnow).
+    k_B : float, default to Boltzmann constant in eV/K
+        boltzmann constant to compute the boltzmann distribution. It is defaulted to
+        eV/K but can be modified according to your needs.
+        
+    Returns
+    -------
+    int
+        Number of inversions (line crossings) between the two orderings.
+    float or None
+        KL divergence between Boltzmann-weighted distributions at
+        temperature T, or None if fictitious_temperature is not given.
+    """
+    isomers = read(file, index=':')
+
+    ref_energies = []
+    calc_energies = []
+
+    for atoms in isomers:
+        ref_energies.append(atoms.get_potential_energy())
+        atoms.calc = calc
+        calc_energies.append(atoms.get_potential_energy())
+
+    pairs = list(zip(ref_energies, calc_energies))
+    pairs.sort(key=lambda x: x[0])
+
+    sorted_calc = [p[1] for p in pairs]
+
+    inversions = 0
+    n = len(sorted_calc)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if sorted_calc[i] > sorted_calc[j]:
+                inversions += 1
+
+    if fictitious_temperature is not None:
+        from snow.descriptors.utils import kl_div
+
+        beta = 1.0 / (k_B * fictitious_temperature)
+
+        ref_arr = np.array(ref_energies)
+        calc_arr = np.array(calc_energies)
+
+        ref_probs = np.exp(-beta * (ref_arr - ref_arr.min()))
+        ref_probs /= ref_probs.sum()
+
+        calc_probs = np.exp(-beta * (calc_arr - calc_arr.min()))
+        calc_probs /= calc_probs.sum()
+
+        kl = kl_div(ref_probs, calc_probs)
+        return np.array(ref_energies, dtype=float), np.array(calc_energies, dtype=float), inversions, kl
+    else:
+        return np.array(ref_energies, dtype=float), np.array(calc_energies, dtype=float), inversions
+
 
 def compute_phonons(calc,
                     displacement_distance=0.02,
@@ -743,7 +811,7 @@ def compute_phonons(calc,
         phonon = Phonopy(phcell, supercell_matrix=np.eye(3)*4)
 
     else:
-        sys.exit('generating our own phonon file is not implemented yet.')
+        raise ValueError('generating our own phonon file is not implemented yet.')
     
     phonon.generate_displacements(distance = displacement_distance)
     forces = []
@@ -776,7 +844,7 @@ def get_calc(config):
     
     elif calc_style == "flare":
         from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
-        sys.exit("not implemented yet")
+        raise NotImplementedError("flare calculator not implemented yet")
 
     elif calc_style == "mace":
         from mace.calculators import MACECalculator
@@ -787,12 +855,14 @@ def get_calc(config):
         calc = mace_mp()
 
     elif calc_style == "nequip":
-        sys.exit("not implemented yet")
+        raise NotImplementedError("nequip calculator not implemented yet")
     
     else:
-        sys.exit(calc_style+" is not a known calc type")
+        raise ValueError(calc_style+" is not a known calc type")
     
     return calc
+
+
 
 
 def main(config_file):
@@ -874,9 +944,8 @@ def main(config_file):
         properties['special_configs'].update(results)
     
     #save to file
-    f = open(setup["calculator"]+"_benchmark.yaml",'w')
-    yaml.dump(properties, f)
-    f.close()
+    with open(setup["calculator"]+"_benchmark.yaml",'w') as f:
+        yaml.dump(properties, f)
 
     #COMPUTE MD Computational PERFORMANCE
     if compute_performance:
@@ -889,22 +958,19 @@ def main(config_file):
     #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
     print('computing distant atom curves')
     d, e = adsorbate_curve(symbol,calc)
-    f = open('adsorbate_curve.dat','w')
-    for dd, ee in zip(d, e):
-        f.write(str(dd)+' '+str(ee)+'\n')
-    f.close()
+    with open('adsorbate_curve.dat','w') as f:
+        for dd, ee in zip(d, e):
+            f.write(str(dd)+' '+str(ee)+'\n')
 
     d, e = dimer_curve(symbol,calc)
-    f = open('dimer_curve.dat','w')
-    for dd, ee in zip(d, e):
-        f.write(str(dd)+' '+str(ee)+'\n')
-    f.close()
+    with open('dimer_curve.dat','w') as f:
+        for dd, ee in zip(d, e):
+            f.write(str(dd)+' '+str(ee)+'\n')
 
     d, e = eos_fcc_large_test(symbol, calc, properties['fcc_bulk']['a0'])
-    f = open('large_eos_curve.dat','w')
-    for dd, ee in zip(d, e):
-        f.write(str(dd)+' '+str(ee)+'\n')
-    f.close()
+    with open('large_eos_curve.dat','w') as f:
+        for dd, ee in zip(d, e):
+            f.write(str(dd)+' '+str(ee)+'\n')
 
     #EXCESS ENERGIES
     if compute_excess_energy:
@@ -915,8 +981,9 @@ def main(config_file):
 
 if __name__ == '__main__':
 
-    if len(sys.argv)<1:
+    if len(sys.argv)<2:
         print('usage:',sys.argv[0],' <setup_file>')
+        sys.exit(1)
 
     main(sys.argv[1])
 

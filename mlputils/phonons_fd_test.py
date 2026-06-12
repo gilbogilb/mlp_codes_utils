@@ -103,7 +103,8 @@ for i, supercell in enumerate(phonon.supercells_with_displacements):
 
     elif mode == 'use_calc':
 
-        calc_config = yaml.safe_load(open(calc_config_file))
+        with open(calc_config_file) as f:
+            calc_config = yaml.safe_load(f)
         calc = get_calc(calc_config)
         atoms.calc = calc
 
