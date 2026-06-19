@@ -736,6 +736,10 @@ def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617
         
     Returns
     -------
+    np.array
+        reference energies
+    np.arary
+        calcualtor energies
     int
         Number of inversions (line crossings) between the two orderings.
     float or None
