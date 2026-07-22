@@ -713,7 +713,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     return diff_error, ref_diff, model_diff
 
 
-def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617333262e-5):
+def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitious_temperature=None, k_B = 8.617333262e-5, use_excess_energy=True):
     """
     Compare energy ordering of isomers between reference data and calculator.
 
@@ -721,40 +721,79 @@ def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617
     calculator energy is computed.  The number of "crossings" (inversions)
     between the reference ordering and the calculator ordering is returned.
 
+    By default, unnormalized excess energies are used:
+        excess_energy = E_total - N * cohesive_energy
+    where the DFT reference uses the provided cohesive_energy and the
+    calculator's cohesive energy is computed by relaxing a bulk FCC crystal.
+    This removes the trivial N-dependent energy offset and compares
+    structural energy differences. Set use_excess_energy=False to compare
+    raw total energies instead.
+
     Parameters
     ----------
     file : str
         Path to a file containing isomers (readable by ase.io.read).
     calc : ASE calculator
         Calculator used to compute the energy of each isomer.
+    symbol : str
+        Chemical symbol (e.g. 'Cu'). Used to compute the calculator's
+        cohesive energy from a relaxed bulk FCC crystal.
+    alat : float
+        Approximate lattice constant in Angstrom. Used to build the
+        bulk FCC structure for the calculator's cohesive energy.
+    cohesive_energy : float
+        DFT cohesive energy per atom (in eV) of the bulk phase.
     fictitious_temperature : float or None
         Optional fictitious temperature for Boltzmann-weighted
         comparisons via KL divergence (requires pysnow).
     k_B : float, default to Boltzmann constant in eV/K
         boltzmann constant to compute the boltzmann distribution. It is defaulted to
         eV/K but can be modified according to your needs.
-        
+    use_excess_energy : bool, default True
+        If True, compute excess energies (E - N*cohesive_energy) for both
+        reference and calculator before comparing orderings.
+
     Returns
     -------
     np.array
-        reference energies
-    np.arary
-        calcualtor energies
+        reference energies (or excess energies if use_excess_energy=True)
+    np.array
+        calculator energies (or excess energies if use_excess_energy=True)
     int
         Number of inversions (line crossings) between the two orderings.
     float or None
         KL divergence between Boltzmann-weighted distributions at
         temperature T, or None if fictitious_temperature is not given.
     """
+    if use_excess_energy:
+        iso_atom = Atoms([symbol], [[0., 0., 0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        e_iso_model = iso_atom.get_potential_energy()
+
+        bulkfcc = fcc(symbol, latticeconstant=alat, pbc=(1, 1, 1))
+        bulkfcc.calc = calc
+        dyn = LBFGS(bulkfcc, logfile="bfgs.log")
+        dyn.run(fmax=1e-5)
+        ecoh_model = bulkfcc.get_potential_energy() / len(bulkfcc) - e_iso_model
+
     isomers = read(file, index=':')
 
     ref_energies = []
     calc_energies = []
 
     for atoms in isomers:
-        ref_energies.append(atoms.get_potential_energy())
+        ref_e = atoms.get_potential_energy()
         atoms.calc = calc
-        calc_energies.append(atoms.get_potential_energy())
+        calc_e = atoms.get_potential_energy()
+
+        if use_excess_energy:
+            n = len(atoms)
+            ref_e = ref_e - n * cohesive_energy
+            calc_e = calc_e - n * ecoh_model
+
+        ref_energies.append(ref_e)
+        calc_energies.append(calc_e)
 
     pairs = list(zip(ref_energies, calc_energies))
     pairs.sort(key=lambda x: x[0])
