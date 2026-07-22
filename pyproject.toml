@@ -3,7 +3,7 @@ name = "mlputils"
 description = "tools to train and test machine learning potentials"
 readme = "README.md"
 authors = [{name="Gilberto Nardi", email="gilberto.nardi@unimi.it"}]
-dynamic = ["version"]
+version = "0.1.0"
 
 dependencies = [
   "ase",
@@ -13,10 +13,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-extras = [
-  "phonopy",
+flare = ["mir-flare"]
+mace = ["mace"]
+phonopy = ["phonopy"]
+snow = ["snow"]
+all = [
   "mir-flare",
-  "mace"
+  "mace",
+  "phonopy",
+  "snow",
 ]
 
 [build-system]

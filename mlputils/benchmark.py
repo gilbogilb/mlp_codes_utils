@@ -45,7 +45,7 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     and writes a file with the V-E(V) curve ('eos.dat')
     """
 
-    bulk_properties = dict({})
+    bulk_properties = {}
     #different potentials have different conventions (return or not the ab-initio isolated atom energy)
     iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
     iso_atom.calc = calc
@@ -56,8 +56,8 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     alats  = np.linspace(bounds[0] , bounds[1], 15)
 
     #compute energy over a range of latice constants around the putative minimum
-    for alat in alats:
-        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+    for a_lat in alats:
+        atoms      = fcc(size=(1,1,1), latticeconstant=a_lat, symbol=symbol, pbc=(1,1,1))
         atoms.calc = calc
         poten    = atoms.get_potential_energy()
         vol      = atoms.get_volume()
@@ -74,8 +74,8 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     bounds            = [alat_precise - pmppercent*alat_precise/100., alat_precise+pmppercent*alat_precise/100.]
     alats             = np.linspace(bounds[0] , bounds[1], 20)
 
-    for alat in alats:
-        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+    for a_lat in alats:
+        atoms      = fcc(size=(1,1,1), latticeconstant=a_lat, symbol=symbol, pbc=(1,1,1))
         atoms.calc = calc
         poten    = atoms.get_potential_energy()
         vol      = atoms.get_volume()
@@ -88,7 +88,7 @@ def eos_fcc_fit(symbol, calc, alat, pmppercent=3.0):
     B  = (B/kJ * 1.0e24)      #bulk modulus - eV/A**3 to GPa conversion
     a0 = (v0/len(atoms)*4. )**(1 / 3.0)  #lattice constant from the volume (normalize per conventional cells)
     e0 = e0/len(atoms) - iso_atom.get_potential_energy()    #potential energy per atom
-    bulk_properties["fcc_bulk"]       = dict({})
+    bulk_properties["fcc_bulk"]       = {}
     bulk_properties["fcc_bulk"]['B']  = float(B)
     bulk_properties["fcc_bulk"]['a0'] = float(a0)
     bulk_properties["fcc_bulk"]['e0'] = float(e0)
@@ -129,10 +129,10 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
     Returns a dictionary with the computed properties.
     """
 
-    surface_properties = dict({})
-    surfactories = dict({"fcc100": fcc100,
+    surface_properties = {}
+    surfactories = {"fcc100": fcc100,
                      "fcc110": fcc110,
-                     "fcc111": fcc111})
+                     "fcc111": fcc111}
     
     if ecohesive is not None:
         #different potentials have different conventions (return or not the ab-initio isolated atom energy)
@@ -178,7 +178,7 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
         surface = np.linalg.norm(np.cross(cell[0],cell[1]))
         poten   = surf.get_potential_energy()
         surfen  = (poten - e_bulk*len(surf))/(2.*surface)*16.02
-        surface_properties[surfname]=dict({"gamma":float(surfen), "slab_energy": float(poten)})
+        surface_properties[surfname]={"gamma":float(surfen), "slab_energy": float(poten)}
 
     surface_properties['ecoh_for_surface_energy'] = e_bulk
     return surface_properties
@@ -298,159 +298,161 @@ def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='
 
         this_test = {}
 
-        errors_file = open(out_folder+'_'+test_set_file+'_'+'errors.dat','w') #to check if any particular configuration contributes much to the average error
-        parity_e, parity_f, parity_s = open(out_folder+'_'+test_set_file+'_'+'e-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'f-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'s-parity.dat','w')
+        errors_path = out_folder+'_'+test_set_file+'_'+'errors.dat'
+        parity_e_path = out_folder+'_'+test_set_file+'_'+'e-parity.dat'
+        parity_f_path = out_folder+'_'+test_set_file+'_'+'f-parity.dat'
+        parity_s_path = out_folder+'_'+test_set_file+'_'+'s-parity.dat'
 
-        errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
+        with open(errors_path,'w') as errors_file, \
+             open(parity_e_path,'w') as parity_e, \
+             open(parity_f_path,'w') as parity_f, \
+             open(parity_s_path,'w') as parity_s:
 
-        s_count = 0
+            errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
 
-        #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
-        chem_specie   = test_set[0].get_chemical_symbols()[0]
-        iso_atom      = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
-        iso_atom.calc = calc
-        iso_atom.center(vacuum=10.0)
-        E_iso_model   = iso_atom.get_potential_energy()
+            s_count = 0
 
-        for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
+            #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
+            chem_specie   = test_set[0].get_chemical_symbols()[0]
+            iso_atom      = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
+            iso_atom.calc = calc
+            iso_atom.center(vacuum=10.0)
+            E_iso_model   = iso_atom.get_potential_energy()
 
-            #store dft values
-            e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
-            f_dft    = conf.get_forces()
-            #check stress
-            stress_available = True
-            try:
-                s_dft = conf.get_stress(voigt=False)
-            except Exception:
-                stress_available = False
+            for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
 
-            #compute values with new calculator
-            conf.calc = calc
-
-            #store calc values
-            e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
-            f_model    = conf.get_forces()
-            # Check model stress
-            if stress_available:
+                #store dft values
+                e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
+                f_dft    = conf.get_forces()
+                #check stress
+                stress_available = True
                 try:
-                    s_model = conf.get_stress(voigt=False)
+                    s_dft = conf.get_stress(voigt=False)
                 except Exception:
                     stress_available = False
 
-            if not stress_available:
-                print(f"Warning: stresses not available for frame {itconf} in {test_set_file}. Skipping stress errors.")
-            else:
-                s_count +=1
+                #compute values with new calculator
+                conf.calc = calc
 
-            #compute mavs (from reference data)
-            e_at_mav += np.abs(e_at_dft)
-            if use_norm:
-                f_dft_norms    = [np.linalg.norm(f) for f in f_dft]
-                f_model_norms  = [np.linalg.norm(f) for f in f_model]
-                f_mav         += np.average(f_dft_norms)
+                #store calc values
+                e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
+                f_model    = conf.get_forces()
+                # Check model stress
                 if stress_available:
-                    s_dft_norm    = np.linalg.norm(s_dft)
-                    s_model_norm  = np.linalg.norm(s_model)
-                    s_mav        += s_dft_norm
-            else: #components-wise
-                f_mav += np.average( np.ravel( np.abs(f_dft )))
-                if stress_available:
-                    s_mav += np.average( np.ravel( np.abs(s_dft )))
+                    try:
+                        s_model = conf.get_stress(voigt=False)
+                    except Exception:
+                        stress_available = False
 
-            #compute error
-            de = (e_at_dft-e_at_model)
-            if err_method=='mae':
-                de = np.abs(de)
-            elif err_method=='rmse':
-                de = de**2.
-            e_at_err += de
+                if not stress_available:
+                    print(f"Warning: stresses not available for frame {itconf} in {test_set_file}. Skipping stress errors.")
+                else:
+                    s_count +=1
 
-            if use_norm:
-                f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
+                #compute mavs (from reference data)
+                e_at_mav += np.abs(e_at_dft)
+                if use_norm:
+                    f_dft_norms    = [np.linalg.norm(f) for f in f_dft]
+                    f_model_norms  = [np.linalg.norm(f) for f in f_model]
+                    f_mav         += np.average(f_dft_norms)
+                    if stress_available:
+                        s_dft_norm    = np.linalg.norm(s_dft)
+                        s_model_norm  = np.linalg.norm(s_model)
+                        s_mav        += s_dft_norm
+                else: #components-wise
+                    f_mav += np.average( np.ravel( np.abs(f_dft )))
+                    if stress_available:
+                        s_mav += np.average( np.ravel( np.abs(s_dft )))
 
-                if err_method == 'mae':
-                    pass
-                elif err_method == 'rmse':
-                    f_dist_norms = [ forc**2. for forc in f_dist_norms]
+                #compute error
+                de = (e_at_dft-e_at_model)
+                if err_method=='mae':
+                    de = np.abs(de)
+                elif err_method=='rmse':
+                    de = de**2.
+                e_at_err += de
 
-                f_err += np.average(f_dist_norms) #2-norm
-
-                if stress_available:
-                    s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
+                if use_norm:
+                    f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
 
                     if err_method == 'mae':
                         pass
                     elif err_method == 'rmse':
-                        s_dist_norm = s_dist_norm **2.
-                    
-                    s_err += s_dist_norm
-            
-            else: #compontents-wise
-                f_dist = np.ravel( np.abs(f_dft - f_model) )
+                        f_dist_norms = [ forc**2. for forc in f_dist_norms]
 
-                if err_method == 'mae':
-                    pass
-                elif err_method == 'rmse':
-                    f_dist = [forc**2 for forc in f_dist]
+                    f_err += np.average(f_dist_norms) #2-norm
 
-                f_err += np.average( f_dist )
+                    if stress_available:
+                        s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
 
-                if stress_available:
-                    s_dist = np.ravel( np.abs(s_dft - s_model) )
+                        if err_method == 'mae':
+                            pass
+                        elif err_method == 'rmse':
+                            s_dist_norm = s_dist_norm **2.
+                        
+                        s_err += s_dist_norm
+                
+                else: #compontents-wise
+                    f_dist = np.ravel( np.abs(f_dft - f_model) )
 
                     if err_method == 'mae':
                         pass
                     elif err_method == 'rmse':
-                        s_dist = s_dist **2.                    
+                        f_dist = [forc**2 for forc in f_dist]
 
-                    s_err += np.average( s_dist )
+                    f_err += np.average( f_dist )
 
-            #write to output
-            if use_norm:
-                f_dft_print  = np.average(f_dft_norms)
-                f_dist_print = np.average(f_dist_norms)
-                if stress_available:
-                    s_dft_print  = s_dft_norm
-                    s_dist_print = s_dist_norm
-            else:
-                f_dft_print  = np.average( np.ravel(f_dft) )
-                f_dist_print = np.average( np.ravel(f_dist) )
-                if stress_available:
-                    s_dft_print  = np.average( np.ravel(s_dft) )
-                    s_dist_print = np.average( np.ravel(s_dist) )
+                    if stress_available:
+                        s_dist = np.ravel( np.abs(s_dft - s_model) )
 
-            errors_file.write(
-                f"{itconf} "
-                f"{np.abs(e_at_dft - e_at_model):.3g} "
-                f"{np.abs(e_at_dft):.3g} "
-                f"{f_dist_print:.3g} "
-                f"{f_dft_print:.3g} "
-            )
-            if stress_available:
+                        if err_method == 'mae':
+                            pass
+                        elif err_method == 'rmse':
+                            s_dist = s_dist **2.                    
+
+                        s_err += np.average( s_dist )
+
+                #write to output
+                if use_norm:
+                    f_dft_print  = np.average(f_dft_norms)
+                    f_dist_print = np.average(f_dist_norms)
+                    if stress_available:
+                        s_dft_print  = s_dft_norm
+                        s_dist_print = s_dist_norm
+                else:
+                    f_dft_print  = np.average( np.ravel(f_dft) )
+                    f_dist_print = np.average( np.ravel(f_dist) )
+                    if stress_available:
+                        s_dft_print  = np.average( np.ravel(s_dft) )
+                        s_dist_print = np.average( np.ravel(s_dist) )
+
                 errors_file.write(
-                    f"{s_dist_print:.3g} "
-                    f"{s_dft_print:.3g}"
+                    f"{itconf} "
+                    f"{np.abs(e_at_dft - e_at_model):.3g} "
+                    f"{np.abs(e_at_dft):.3g} "
+                    f"{f_dist_print:.3g} "
+                    f"{f_dft_print:.3g} "
                 )
-            errors_file.write("\n")
-
-            parity_e.write(f"{e_at_dft} {e_at_model}\n")
-
-            if use_norm:
-                for fd, fm in zip(f_dft_norms, f_model_norms):
-                    parity_f.write(f"{fd} {fm}\n")
                 if stress_available:
-                    parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
-            else:
-                for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
-                    parity_f.write(f"{fd} {fm}\n")
-                if stress_available:
-                    for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
-                        parity_s.write(f"{sd} {sm}\n")
+                    errors_file.write(
+                        f"{s_dist_print:.3g} "
+                        f"{s_dft_print:.3g}"
+                    )
+                errors_file.write("\n")
 
-        errors_file.close()
-        parity_e.close()
-        parity_f.close()
-        parity_s.close()
+                parity_e.write(f"{e_at_dft} {e_at_model}\n")
+
+                if use_norm:
+                    for fd, fm in zip(f_dft_norms, f_model_norms):
+                        parity_f.write(f"{fd} {fm}\n")
+                    if stress_available:
+                        parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
+                else:
+                    for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
+                        parity_f.write(f"{fd} {fm}\n")
+                    if stress_available:
+                        for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
+                            parity_s.write(f"{sd} {sm}\n")
 
         #normalize
         nconf = float(len(test_set))
