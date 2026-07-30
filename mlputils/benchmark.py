@@ -23,6 +23,7 @@ from ase.constraints import FixAtoms
 
 #calculators are imported later on, depending on your chosen calc in the yaml setup file
 
+#TODO
 #add output folder
 #try su stresses
 #extend to more than one chemical specie
@@ -282,7 +283,7 @@ def compute_test_errors(calc, test_set_files, E_iso, use_norm=True, err_method='
         if err_method == 'mae':
             return np.abs(difference)
         elif err_method == 'rmse':
-            return difference**2
+            return np.sqrt(difference**2)
     
     if type(test_set_files)==str:
         test_set_files = [test_set_files]
@@ -875,7 +876,7 @@ def main(config_file):
     #chemical symbol - single specie only (for now)
     symbol = setup['symbol']
 
-    #dft references
+    #dft references - can we also get it from the potential?
     E_iso = setup['E_iso']
 
     a_ref = setup['fcc_lattice_constant']
@@ -979,12 +980,13 @@ def main(config_file):
 
 
 
-if __name__ == '__main__':
-
-    if len(sys.argv)<2:
-        print('usage:',sys.argv[0],' <setup_file>')
+def cli():
+    if len(sys.argv) < 2:
+        print('usage:', sys.argv[0], ' <setup_file>')
         sys.exit(1)
-
     main(sys.argv[1])
-
     print("Done.")
+
+
+if __name__ == '__main__':
+    cli()

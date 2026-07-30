@@ -19,6 +19,9 @@ extras = [
   "mace"
 ]
 
+[project.scripts]
+benchmark = "mlputils.benchmark:cli"
+
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
