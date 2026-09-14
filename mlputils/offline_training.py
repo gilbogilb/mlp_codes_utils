@@ -14,6 +14,7 @@ import json
 import tempfile
 import random
 import yaml
+import warnings
 from datetime import datetime
 from copy import deepcopy
 
@@ -449,6 +450,9 @@ def train_offline(config, train_set, test_set):
     from flare.atoms import FLARE_Atoms
     from flare.scripts.otf_train import get_sgp_calc
 
+    if "seed" in config:
+        np.random.seed(config["seed"])
+
     #initialize variables and objects
     #add write to json
     #implement style=accept in optimization
@@ -560,11 +564,14 @@ def train_offline(config, train_set, test_set):
                 step += 1
                 continue
 
-            if np.max(stds) > call_threshold:
+            # Reduce 2D (nat, 3) to 1D (nat,): max absolute per atom
+            stds_per_atom = np.max(np.abs(stds), axis=1)
+
+            if np.max(stds_per_atom) > call_threshold:
                 oracle_calls +=1
 
                 #get high uncertainty configs
-                indices = np.where(stds>add_threshold)[0]
+                indices = np.where(stds_per_atom > add_threshold)[0]
                 sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #different from davide, but as in flare-otf. Could it be differnt for the full set?
                 nsparse += len(indices)
                 conf.info["sparse_set"] = np.array(indices)
@@ -572,7 +579,7 @@ def train_offline(config, train_set, test_set):
                 training_structures.append(conf)
 
                 #log
-                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds[indices]) +'\n')
+                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds_per_atom[indices]) +'\n')
                 sparse_indices.append(indices.tolist())
 
                 #should we optimize?
@@ -585,9 +592,7 @@ def train_offline(config, train_set, test_set):
                     if rollback: #optimization failed
                         file_log.write('optimization failed. Currently only accept style rollback is implemented.\n')
                         if config["when_rollback"] == "discard":
-                            #create an sgp with all configs up until this one
-                            print('discard style rollback is not yet implemented')
-                            pass
+                            warnings.warn('discard style rollback is not yet implemented; falling back to accept style')
                         pass
                     else:
                         file_hyps.write(f"{step}\t{' '.join(map(str, sgp.sparse_gp.hyperparameters))}\n")
@@ -637,27 +642,8 @@ def train_offline(config, train_set, test_set):
 
     return
 
-def model_from_dict(json_dict_file):
+def model_from_json(json_dict_file):
     from flare.bffs.sgp.calculator import SGP_Calculator
-
-    #from flare.learners.OTF class
-    #flare_calc_dict = json.load(open(json_dict_file))["flare_calc"]
-
-    # Build FLARE_Calculator from dict
-    #if flare_calc_dict["class"] == "FLARE_Calculator":
-    #     flare_calc = FLARE_Calculator.from_file(json_dict_file)
-    #     _kernels = None
-    #     # Build SGP_Calculator from dict
-    #     # TODO: we still have the issue that the c++ kernel needs to be
-    #     # in the current space, otherwise there is Seg Fault
-    #     # That's why there is the _kernels
-    # elif flare_calc_dict["class"] == "SGP_Calculator":
-    #     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
-    # else:
-    #     raise TypeError(f"The calculator {json_dict_file} is not recognized.")
-
-
-    #todo: generalize
 
     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
     return flare_calc, _kernels
