@@ -724,7 +724,7 @@ def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitiou
     between the reference ordering and the calculator ordering is returned.
 
     By default, unnormalized excess energies are used:
-        excess_energy = E_total - N * cohesive_energy
+        excess_energy = (E_total - N * cohesive_energy) / N^(2/3)
     where the DFT reference uses the provided cohesive_energy and the
     calculator's cohesive energy is computed by relaxing a bulk FCC crystal.
     This removes the trivial N-dependent energy offset and compares
@@ -791,8 +791,9 @@ def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitiou
 
         if use_excess_energy:
             n = len(atoms)
-            ref_e = ref_e - n * cohesive_energy
-            calc_e = calc_e - n * ecoh_model
+            surf_term = n**(2./3.)
+            ref_e = ( ref_e - n * cohesive_energy ) / surf_term
+            calc_e = ( calc_e - n * ecoh_model ) / surf_term
 
         ref_energies.append(ref_e)
         calc_energies.append(calc_e)

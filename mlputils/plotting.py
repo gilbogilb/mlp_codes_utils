@@ -45,6 +45,7 @@ def plot_energy_correspondence(
     figsize=(8, 10),
     dpi=300,
     cmap_name='tab20',
+    inversions=None,
 ):
     energies_A = np.asarray(energies_A, dtype=float)
     energies_B = np.asarray(energies_B, dtype=float)
@@ -96,9 +97,19 @@ def plot_energy_correspondence(
     ax.set_xlim(-0.45, 1.45)
     ax.set_xticks([x_left, x_right])
     ax.set_xticklabels([left_label, right_label])
-    ax.set_ylabel('Energy (eV)')
+    ax.set_ylabel('Excess energy (eV)')
     ax.set_title('Energy ordering correspondence')
     ax.grid(axis='y', alpha=0.3)
+
+    if inversions is not None:
+        ax.text(
+            0.02, 0.98,
+            f'{inversions} crossings',
+            transform=ax.transAxes,
+            ha='left', va='top',
+            fontsize=11,
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray', alpha=0.8),
+        )
 
     plt.tight_layout()
     plt.show()
