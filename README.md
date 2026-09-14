@@ -155,3 +155,8 @@ See `workflows_examples/` for complete config files.
 - Units: eV, Angstrom, ASE Voigt stress convention
 - Output files written to the current working directory
 - `reference_dft_maker.py` requires `parameters.yml` and `parameters_relax.yml` in the working directory
+
+
+## TODO
+
+ - add a plotting tool/list of codes
