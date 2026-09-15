@@ -715,7 +715,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset):
     return diff_error, ref_diff, model_diff
 
 
-def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitious_temperature=None, k_B = 8.617333262e-5, use_excess_energy=True):
+def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, E_iso=None, fictitious_temperature=None, k_B = 8.617333262e-5, use_excess_energy=True):
     """
     Compare energy ordering of isomers between reference data and calculator.
 
@@ -745,6 +745,9 @@ def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitiou
         bulk FCC structure for the calculator's cohesive energy.
     cohesive_energy : float
         DFT cohesive energy per atom (in eV) of the bulk phase.
+    E_iso : float or None
+        if your dft/reference data has an isolated atom energy term, pass this value as E_iso
+        to have it removed from the total energy when computing excess energy or total energies.
     fictitious_temperature : float or None
         Optional fictitious temperature for Boltzmann-weighted
         comparisons via KL divergence (requires pysnow).
@@ -786,6 +789,9 @@ def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, fictitiou
 
     for atoms in isomers:
         ref_e = atoms.get_potential_energy()
+        if E_iso is not None:
+            ref_e -= E_iso*len(atoms)
+
         atoms.calc = calc
         calc_e = atoms.get_potential_energy()
 

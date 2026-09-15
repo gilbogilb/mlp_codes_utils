@@ -46,6 +46,7 @@ def plot_energy_correspondence(
     dpi=300,
     cmap_name='tab20',
     inversions=None,
+    title='Energy ordering correspondence'
 ):
     energies_A = np.asarray(energies_A, dtype=float)
     energies_B = np.asarray(energies_B, dtype=float)
@@ -98,7 +99,7 @@ def plot_energy_correspondence(
     ax.set_xticks([x_left, x_right])
     ax.set_xticklabels([left_label, right_label])
     ax.set_ylabel('Excess energy (eV)')
-    ax.set_title('Energy ordering correspondence')
+    ax.set_title(title)
     ax.grid(axis='y', alpha=0.3)
 
     if inversions is not None:
