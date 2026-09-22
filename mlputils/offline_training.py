@@ -1,5 +1,4 @@
-
-#some code by davide alimonti
+#some code by davide alimonti (thanks!)
 #extensions: #add stress in ase2flare?
 #add stress error
 #take care with randomness - here, np.random is used, should set the seed in np as well;
@@ -572,6 +571,7 @@ def train_offline(config, train_set, test_set):
 
                 #get high uncertainty configs
                 indices = np.where(stds_per_atom > add_threshold)[0]
+                print(f'{len(indices)}/{len(conf)} atoms are over threshold.')
                 sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #different from davide, but as in flare-otf. Could it be differnt for the full set?
                 nsparse += len(indices)
                 conf.info["sparse_set"] = np.array(indices)
@@ -586,11 +586,13 @@ def train_offline(config, train_set, test_set):
                 if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
 
                     file_log.write(f"optimizing call #{oracle_calls}...")
+                    print('optimizing hyperparameters...')
                     #train hyperparameters
                     rollback = optimize_hyps(sgp.sparse_gp, **config["optimizer_options"])
 
                     if rollback: #optimization failed
                         file_log.write('optimization failed. Currently only accept style rollback is implemented.\n')
+                        print('optimization failed!')
                         if config["when_rollback"] == "discard":
                             warnings.warn('discard style rollback is not yet implemented; falling back to accept style')
                         pass
