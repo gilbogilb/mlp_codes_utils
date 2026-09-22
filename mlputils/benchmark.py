@@ -965,28 +965,28 @@ def main(config_file):
         ico = ih(symbol, 4, a_ref)
         properties["performance_atom_step_s"] = MD_performance(ico, calc, steps=500)
 
-    print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
+    # print(yaml.dump(properties, sort_keys=False, default_flow_style=False, indent=4))
 
-    # fresh calculator for small-system calculations (dimer, adsorbate, EOS sweep)
-    # avoids "Lost atoms via change_box" from stale LAMMPS state left by bulk/slab runs
-    calc = get_calc(setup)
+    # # fresh calculator for small-system calculations (dimer, adsorbate, EOS sweep)
+    # # avoids "Lost atoms via change_box" from stale LAMMPS state left by bulk/slab runs
+    # calc = get_calc(setup)
 
-    #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
-    d, e = dimer_curve(symbol,calc)
-    with open('dimer_curve.dat','w') as f:
-        for dd, ee in zip(d, e):
-            f.write(str(dd)+' '+str(ee)+'\n')
+    # #ADSORBATE/DIMER: CHECK FOR INSTABILITIES
+    # d, e = dimer_curve(symbol,calc)
+    # with open('dimer_curve.dat','w') as f:
+    #     for dd, ee in zip(d, e):
+    #         f.write(str(dd)+' '+str(ee)+'\n')
 
-    d, e = eos_fcc_large_test(symbol, calc, properties['fcc_bulk']['a0'])
-    with open('large_eos_curve.dat','w') as f:
-        for dd, ee in zip(d, e):
-            f.write(str(dd)+' '+str(ee)+'\n')
+    # d, e = eos_fcc_large_test(symbol, calc, properties['fcc_bulk']['a0'])
+    # with open('large_eos_curve.dat','w') as f:
+    #     for dd, ee in zip(d, e):
+    #         f.write(str(dd)+' '+str(ee)+'\n')
 
-    print('computing distant atom curves')
-    d, e = adsorbate_curve(symbol,calc)
-    with open('adsorbate_curve.dat','w') as f:
-        for dd, ee in zip(d, e):
-            f.write(str(dd)+' '+str(ee)+'\n')
+    # print('computing distant atom curves')
+    # d, e = adsorbate_curve(symbol,calc)
+    # with open('adsorbate_curve.dat','w') as f:
+    #     for dd, ee in zip(d, e):
+    #         f.write(str(dd)+' '+str(ee)+'\n')
 
 
 
