@@ -333,6 +333,7 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
 
         e_at_err, f_err, s_err = 0., 0., 0.
         e_at_mav, f_mav, s_mav = 0., 0., 0.
+        s_count = 0
 
         this_test = {}
 
@@ -344,56 +345,18 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
             suffix = sha256(str(test_set_file).encode()).hexdigest()[:12]
             output_name += '_' + suffix
         output_prefix = output_dir / ('_' + output_name + '_')
-        errors_file = open(str(output_prefix) + 'errors.dat', 'w')
-        parity_e = open(str(output_prefix) + 'e-parity.dat', 'w')
-        parity_f = open(str(output_prefix) + 'f-parity.dat', 'w')
-        parity_s = open(str(output_prefix) + 's-parity.dat', 'w')
 
-        with open(errors_path,'w') as errors_file, \
-             open(parity_e_path,'w') as parity_e, \
-             open(parity_f_path,'w') as parity_f, \
-             open(parity_s_path,'w') as parity_s:
+        with open(str(output_prefix) + 'errors.dat', 'w') as errors_file, \
+             open(str(output_prefix) + 'e-parity.dat', 'w') as parity_e, \
+             open(str(output_prefix) + 'f-parity.dat', 'w') as parity_f, \
+             open(str(output_prefix) + 's-parity.dat', 'w') as parity_s:
 
             errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
-
-        # E_iso_model is passed in from the caller, computed on a fresh calculator
-
-        for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
-
-            #store dft values
-            e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso_ref
-            f_dft    = conf.get_forces()
-            #check stress
-            stress_available = True
-            try:
-                s_dft = conf.get_stress(voigt=False)
-            except Exception:
-                stress_available = False
-
-            #compute values with new calculator
-            conf.calc = calc
-
-            #store calc values
-            e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
-            f_model    = conf.get_forces()
-            # Check model stress
-            if stress_available:
-                try:
-                    s_model = conf.get_stress(voigt=False)
-                except Exception:
-                    stress_available = False
-
-            #different standards for isolated atom energy (0 vs ab-initio reference value) in different potentials/codess
-            chem_specie   = test_set[0].get_chemical_symbols()[0]
-            iso_atom      = Atoms([chem_specie],[[0.,0.,0.]], pbc=False) #ok for 1-specie...
-            iso_atom.calc = calc
-            iso_atom.center(vacuum=10.0)
-            E_iso_model   = iso_atom.get_potential_energy()
 
             for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
 
                 #store dft values
-                e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso
+                e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso_ref
                 f_dft    = conf.get_forces()
                 #check stress
                 stress_available = True
