@@ -1,3 +1,4 @@
+output_folder: output/  # Directory for generated files; created if necessary
 #setup validation calculations for benchmark.py and read dft-computed values
 symbol : 'Cu'
 E_iso : -1661.4439420703893
@@ -10,11 +11,11 @@ Bulk_modulus : 169.2
 110_surface_energy : 1.77
 100_surface_energy : 1.69
 
-test_set_file : 'test.xyz'
+test_set_file : 'output/test.xyz'
 err_method: 'mae'
 
 calculator : "flare_lammps" #mace, flare, flare_lammps(recommended), nequip, eam_lammps are or will be implemented
-model_file : "lmp.flare" #model weights or general model file.
+model_file : "output/lmp.flare" #model weights or general model file.
 
 compute_excess_energy : False
 compute_performance : False

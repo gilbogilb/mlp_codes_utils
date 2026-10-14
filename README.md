@@ -56,7 +56,7 @@ python -m mlputils.benchmark <config.yaml>
 Create `parameters.yml` and `parameters_relax.yml` in your working directory (see `reference_dft_maker.py` docstrings for keys), then:
 
 ```bash
-python -m mlputils.reference_dft_maker input chemical_symbol vacuum_for_surfaces_and_clusters /path/to/pseudos
+python -m mlputils.reference_dft_maker input chemical_symbol input_dft_parameters.yaml
 # run pw.x on the generated .pwi files, then:
 python -m mlputils.reference_dft_maker parse chemical_symbol isolated_atom_energy
 ```
@@ -101,6 +101,7 @@ Computes bulk EOS, surface energies, test set errors (MAE/RMSE), adsorbate/dimer
 | NequIP | `nequip` | Not yet implemented |
 
 Set `calculator` and `model_file` in your benchmark YAML config.
+It should be pretty easy to modify the code so that you use any ASE calculator you like.
 
 ## YAML config reference
 
@@ -147,15 +148,13 @@ See `workflows_examples/` for complete config files.
 | `mace` | `benchmark.py` | For MACE models | `mace` |
 | `phonopy` | `benchmark.py`, `reference_dft_maker.py` | For phonons | `phonopy` |
 | `snow` | `makesets.py`, `benchmark.py` | For GCN/CNAP sorting | `snow` |
-| `lammps` Python | `benchmark.py` | For LAMMPS-based FLARE | — |
+| `lammps` Python | `benchmark.py` | For LAMMPS-based FLARE or LAMMPS calculators in general | — |
 
 ## Conventions
 
 - Single-specie systems only (multi-specie not implemented)
 - Units: eV, Angstrom, ASE Voigt stress convention
-- Output files written to the current working directory
-- `reference_dft_maker.py` requires `parameters.yml` and `parameters_relax.yml` in the working directory
-
+- Output files written to specified output folder
 
 ## TODO
 
