@@ -8,6 +8,8 @@ import yaml
 import numpy as np
 import sys
 from pathlib import Path
+from hashlib import sha256
+from mlputils._outputs import output_path
 import time
 
 from ase import Atoms
@@ -35,7 +37,7 @@ except ImportError:
         return iterable
 
 
-def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0):
+def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0, output_folder='./'):
     """
     Compute fcc bulk energy as a function of volume and fit the equation of state. 
     A first tentative calculation around alat to find the calculator-predicted minimum
@@ -93,13 +95,13 @@ def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0):
     bulk_properties["fcc_bulk"]['e0'] = float(e0)
 
     #write eos data
-    with open('eos.dat','w') as f:
+    with open(output_path(output_folder, 'eos.dat'),'w') as f:
         for a, e in zip(alats, energies):
             f.write(str(a)+" "+str(e/len(atoms))+" \n")
 
     return bulk_properties
 
-def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8), vacuum=6.5, relax=True, relax_layers=2, fmax=1e-5, E_iso_model=None):
+def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8), vacuum=6.5, relax=True, relax_layers=2, fmax=1e-5, E_iso_model=None, output_folder='./'):
     """
     Compute surface energy of fcc low index surfaces (111) (110) (100).
     
@@ -137,10 +139,10 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
         E_iso_model = get_isolated_atom_energy(calc, symbol)
 
     if ecohesive is not None:
-        e_bulk = (abs(E_iso_model) + abs(ecohesive))*-1. #ensure right sign
+        e_bulk = E_iso_model + ecohesive
     
     else:
-        e_bulk = (abs(E_iso_model) + abs(get_cohesive_energy_relax(calc, symbol, lattice_constant, relax, E_iso_model=E_iso_model)))*-1
+        e_bulk = E_iso_model + get_cohesive_energy_relax(calc, symbol, lattice_constant, relax, E_iso_model=E_iso_model, output_folder=output_folder)
 
     for surfact, surfname in zip(surfactories.values(), surfactories.keys()):
 
@@ -161,7 +163,7 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
             surf.set_constraint(c)
 
             #relax the structure(s)
-            dyn = LBFGS(surf,logfile="bfgs.log")
+            dyn = LBFGS(surf,logfile=output_path(output_folder, "bfgs.log"))
             dyn.run(fmax=fmax)
 
         #compute surface energy
@@ -262,7 +264,7 @@ def get_isolated_atom_energy(calc, symbol, vacuum=10.0):
     return atom.get_potential_energy()
 
 
-def get_cohesive_energy_relax(calc, symbol, lattice_constant, relax=True, fmax=1e-5, E_iso_model=None):
+def get_cohesive_energy_relax(calc, symbol, lattice_constant, relax=True, fmax=1e-5, E_iso_model=None, output_folder='./'):
     """Compute cohesive energy per atom = E_bulk / N - E_iso.
 
     Builds an FCC unit cell at the given ``lattice_constant``,
@@ -274,7 +276,7 @@ def get_cohesive_energy_relax(calc, symbol, lattice_constant, relax=True, fmax=1
     bulk = fcc(size=(1, 1, 1), latticeconstant=lattice_constant, symbol=symbol)
     bulk.calc = calc
     if relax:
-        LBFGS(bulk, logfile="bfgs.log").run(fmax=fmax)
+        LBFGS(bulk, logfile=output_path(output_folder, "bfgs.log")).run(fmax=fmax)
     e_bulk_per_atom = bulk.get_potential_energy() / len(bulk)
     if E_iso_model is None:
         E_iso_model = get_isolated_atom_energy(calc, symbol)
@@ -287,7 +289,7 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
     Compute mae/mav on a test set. NB: energies are per atom.
 
     calc: an ASE calculator
-    test_set_files: a string with your xyzs test set configurations (and ab-initio data for energies, forces, stresses) or a list of test sets files
+    test_set_files: a string with your xyzs test set configurations (and ab-initio data for energies, forces, stresses) or a list of test sets files, or a mapping of dataset names to ASE Atoms sequences
     E_iso_ref: reference isolated-atom energy (from DFT, removed from dft results)
     E_iso_model: model-predicted isolated-atom energy (removed from model predictions)
     use_norm: compute errors on norm of forces and stresses (invariant wrt rotations) VS on the single components (use_norm=False)
@@ -315,15 +317,32 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
 
     for test_set_file in test_set_files:
 
-        test_set = read(test_set_file, index=':')
+        if isinstance(test_set_files, dict):
+            test_set = []
+            for reference in test_set_files[test_set_file]:
+                conf = reference.copy()
+                conf.calc = reference.calc
+                test_set.append(conf)
+        else:
+            test_set = read(test_set_file, index=':')
 
         e_at_err, f_err, s_err = 0., 0., 0.
         e_at_mav, f_mav, s_mav = 0., 0., 0.
 
         this_test = {}
 
-        errors_file = open(out_folder+'_'+test_set_file+'_'+'errors.dat','w') #to check if any particular configuration contributes much to the average error
-        parity_e, parity_f, parity_s = open(out_folder+'_'+test_set_file+'_'+'e-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'f-parity.dat','w'), open(out_folder+'_'+test_set_file+'_'+'s-parity.dat','w')
+        output_dir = Path(out_folder).expanduser()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_name = Path(test_set_file).name
+        # Distinguish datasets with the same filename from different directories.
+        if sum(Path(name).name == output_name for name in test_set_files) > 1:
+            suffix = sha256(str(test_set_file).encode()).hexdigest()[:12]
+            output_name += '_' + suffix
+        output_prefix = output_dir / ('_' + output_name + '_')
+        errors_file = open(str(output_prefix) + 'errors.dat', 'w')
+        parity_e = open(str(output_prefix) + 'e-parity.dat', 'w')
+        parity_f = open(str(output_prefix) + 'f-parity.dat', 'w')
+        parity_s = open(str(output_prefix) + 's-parity.dat', 'w')
 
         errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
 
@@ -476,11 +495,13 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
 
         e_at_mav /= nconf
         f_mav    /= nconf
-        s_mav    /= s_count
+        if s_count > 0:
+            s_mav /= s_count
 
         e_at_err  /= nconf
         f_err     /= nconf
-        s_err     /= s_count
+        if s_count > 0:
+            s_err /= s_count
 
         if err_method == 'rmse':
             e_at_err = np.sqrt(e_at_err)
@@ -512,7 +533,7 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
 
     return results
 
-def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, octa=True, deca=True, f_thresh=1e-7, E_iso_model=None):
+def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, octa=True, deca=True, f_thresh=1e-7, E_iso_model=None, output_folder='./'):
     """
     Compute excess energy for a range of clusters sizes and structures.
     Can be thought of as some kind of "physical-style" evaluation (we more or less know
@@ -598,14 +619,14 @@ def clusters_excess_energy(symbol, calc, alat, ecoh, max_size=800, ico=True, oct
     for geom, name in zip(geometries, names):
 
         print('minimizing',name+'s')
-        with open(name+'-exc.dat', 'w') as stream:
+        with open(output_path(output_folder, name+'-exc.dat'), 'w') as stream:
             for c in tqdm(geom, desc="warning - this won't be linear"):
 
                 c.center(vacuum=6.5)
                 c.calc = calc
 
                 #relax the structure
-                dyn = LBFGS(c, logfile="bfgs.log")
+                dyn = LBFGS(c, logfile=output_path(output_folder, "bfgs.log"))
                 dyn.run(fmax=f_thresh)
 
                 #compute excess energy
@@ -637,7 +658,7 @@ def MD_performance(atoms, calc, steps=1000, temperature_K=1000):
 def perc_diff(reference, value):
     return (value-reference)/reference*100.
 
-def predict_configs(calc, e_iso_ref, files_to_predict, symbol, ref_cohesive_energy=None, E_iso_model=None, lattice_constant=None):
+def predict_configs(calc, e_iso_ref, files_to_predict, symbol, ref_cohesive_energy=None, E_iso_model=None, lattice_constant=None, output_folder='./'):
     """
     use calc to predict on configurations read from files. Notice: only the last config from each file is read and used for testing prediction.
     Only comparing energies for now. returning a dictionary that can be appended to the produced benchmark file.
@@ -669,12 +690,11 @@ def predict_configs(calc, e_iso_ref, files_to_predict, symbol, ref_cohesive_ener
         if ref_cohesive_energy is not None:
             if lattice_constant is None:
                 raise ValueError("lattice_constant is required when ref_cohesive_energy is given")
-            ecoh_model = get_cohesive_energy_relax(calc, symbol, lattice_constant, E_iso_model=E_iso_model)
-            e_bulk_model = E_iso_model + ecoh_model
+            ecoh_model = get_cohesive_energy_relax(calc, symbol, lattice_constant, E_iso_model=E_iso_model, output_folder=output_folder)
 
             n = len(atoms)
             ref_ee   = ( ref_energy - ref_cohesive_energy*n )/(n**(2./3.))
-            model_ee = ( model_energy - e_bulk_model*n)/(n**(2./3.))
+            model_ee = ( model_energy - ecoh_model*n)/(n**(2./3.))
             diff_ee  = perc_diff(ref_ee, model_ee)
 
         difference = perc_diff(ref_energy, model_energy)
@@ -795,7 +815,7 @@ def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617
 def compute_phonons(calc,
                     displacement_distance=0.02,
                     phonon_file_in=None, 
-                    ase_crystal=None, #primitive cell!
+                    ase_crystal=None, #primitive cell! atoms object
                     out_file_phonon_name='phonon_mlp.yaml', 
                     out_file_bands_name='bands_mlp.yaml',
                     **argv):
@@ -814,8 +834,7 @@ def compute_phonons(calc,
         phonon = load(phonon_file_in)
 
     elif ase_crystal is not None:
-        cell = ase_crystal.get_cell
-        phcell = PhonopyAtoms(cell=cell.get_cell(), positions=cell.get_positions(), numbers=cell.get_atomic_numbers())
+        phcell = PhonopyAtoms(cell=ase_crystal.get_cell(), positions=ase_crystal.get_positions(), numbers=ase_crystal.get_atomic_numbers())
         phonon = Phonopy(phcell, supercell_matrix=np.eye(3)*4)
 
     else:
@@ -848,7 +867,7 @@ def get_calc(config):
         cmds= ["pair_style flare",
             "pair_coeff * * "+model_file]
         #a common calculator for the entire program - some things don't work otherwise
-        calc = LAMMPSlib(lmpcmds=cmds, log_file="test.log", keep_alive=True)
+        calc = LAMMPSlib(lmpcmds=cmds, log_file=output_path(config.get("output_folder", "./"), "test.log"), keep_alive=True)
     
     elif calc_style == "flare":
         from flare.bffs.gp.calculator import FLARE_Calculator as flare_calc #needs FLARE_Atoms objects
@@ -879,6 +898,8 @@ def main(config_file):
     with open(config_file,'r') as f:
         setup = yaml.safe_load(f)
     
+    output_folder = setup.get('output_folder', './')
+
     #get ab-initio data and physical system data
     #chemical symbol - single specie only (for now)
     symbol = setup['symbol']
@@ -914,8 +935,8 @@ def main(config_file):
 
     #compute bulk&surface values
     print('computing dft properties')
-    bulk_properties = eos_fcc_fit(symbol, calc, a_ref, E_iso_model=E_iso_model)
-    surf_properties = low_index_surfen(symbol, calc, bulk_properties['fcc_bulk']['a0'], E_iso_model=E_iso_model)
+    bulk_properties = eos_fcc_fit(symbol, calc, a_ref, E_iso_model=E_iso_model, output_folder=output_folder)
+    surf_properties = low_index_surfen(symbol, calc, bulk_properties['fcc_bulk']['a0'], E_iso_model=E_iso_model, output_folder=output_folder)
     properties = {**surf_properties, **bulk_properties}
 
     #compare with known dft values, compute and store percentage errors
@@ -935,13 +956,13 @@ def main(config_file):
 
     #phonons
     if phonon_ref_file is not None:
-        compute_phonons(calc, phonon_file_in=phonon_ref_file) 
+        compute_phonons(calc, phonon_file_in=phonon_ref_file, out_file_phonon_name=output_path(output_folder, 'phonon_mlp.yaml'), out_file_bands_name=output_path(output_folder, 'bands_mlp.yaml'))
 
     #MAE, MAV on test set
     if test_set_files is not None:
         print('computing test set errors')
 
-        results = compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, err_method=err_method)
+        results = compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, err_method=err_method, out_folder=output_folder)
 
         for dic in results:
             properties.update(dic)
@@ -951,13 +972,9 @@ def main(config_file):
     files_to_predict_folder = setup.get('special_configs_folder','./')
     files_to_predict_full = [files_to_predict_folder+file for file in files_to_predict_on]
     if files_to_predict_on:
-        results = predict_configs(calc, E_iso_ref, files_to_predict_full, symbol, ref_cohesive_energy=e_ref, E_iso_model=E_iso_model, lattice_constant=a_ref)
+        results = predict_configs(calc, E_iso_ref, files_to_predict_full, symbol, ref_cohesive_energy=e_ref, E_iso_model=E_iso_model, lattice_constant=a_ref, output_folder=output_folder)
         properties['special_configs'] = {}
         properties['special_configs'].update(results)
-    
-    #save to file
-    with open(setup["calculator"]+"_benchmark.yaml",'w') as f:
-        yaml.dump(properties, f)
 
     #COMPUTE MD Computational PERFORMANCE
     if compute_performance:
@@ -993,8 +1010,11 @@ def main(config_file):
     #EXCESS ENERGIES
     if compute_excess_energy:
         print('computing excess energies')
-        clusters_excess_energy(symbol,calc, properties['fcc_bulk']['a0'], properties['fcc_bulk']['e0'], max_size=500)
+        clusters_excess_energy(symbol,calc, properties['fcc_bulk']['a0'], properties['fcc_bulk']['e0'], max_size=500, output_folder=output_folder)
 
+    #save to file
+    with open(output_path(output_folder, setup["calculator"]+"_benchmark.yaml"),'w') as f:
+        yaml.dump(properties, f)
 
 
 def cli():

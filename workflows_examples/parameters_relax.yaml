@@ -1,0 +1,30 @@
+output_folder: 'output/'
+calculation: 'relax' # Same as in pw.x
+ecutwfc : 55 # same as in pw.x
+dual : 8 # ecutrho = ecutwfc * dual
+kpts    : "gamma" # size of  MP grid in any direction in a conventional FCC cubic cell of material 
+koffset : null # offset in MP grid
+econv_eV_peratom : 1.e-7 # threshold for electronic convergence in eV per atom
+degauss_eV : 0.2 # smearing width in eV
+smearing : 'mv' # Type of smearing, same as in pw.x. Should always be "mv"
+mixing_beta: 0.7 # Same as in pw.x - default is 0.7
+electron_maxstep: 300
+vacuum: 10.0
+pseudo_dir: pp/
+
+
+# In a QE relaxation BOTH etot and  forc convergence needs be met, so the most stringent will command
+
+etot_conv_thr_eV_peratom: 1.e-3 # Energy convergence tolerance in ionic relaxation in eV per atom
+forc_conv_thr: 1.0e-3 # Same as in pw.x - Please note it is in Ry/Bohr
+
+
+pseudos: # Name of the pseudopotential used
+        Al : "Al.pbesol-n-rrkjus_psl.1.0.0.UPF"
+        Cu : "Cu.pbesol-dn-rrkjus_psl.1.0.0.UPF"
+        Au : "Au.pbesol-dn-rrkjus_psl.0.3.0.UPF"
+latticeconstant: # Reference conventional FCC lattice constant. Is used for kpts rescaling and isomers rescaling. # These are the reference parameters for DFT on Al,Cu,Au
+        Al : 4.015
+        Cu : 3.572
+        Au : 4.099
+        AuAl : 4.050

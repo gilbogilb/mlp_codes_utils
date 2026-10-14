@@ -21,6 +21,7 @@ import numpy as np
 import sys
 import os
 import glob
+from mlputils._outputs import output_path
 import re
 
 ################################
@@ -35,7 +36,7 @@ def convergence_ewfc_input_maker(symbol,
                                  dual=8, 
                                  smearing=0.008, #in Ry!!!
                                  kpts=(8,8,8),
-                                 conv_thr=1e-6/ry):
+                                 conv_thr=1e-6/ry, output_folder='./'):
     
     #make inputs for convergence calculations: ecutwfc
 
@@ -64,7 +65,7 @@ def convergence_ewfc_input_maker(symbol,
     for ecut in ewfc_range:
         input_data['system']['ecutwfc'] = ecut
         input_data['system']['ecutrho'] = dual*ecut
-        write(f'{symbol}_bulk_ecut_{ecut}.pwi', bulkfcc, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+        write(output_path(output_folder, f'{symbol}_bulk_ecut_{ecut}.pwi'), bulkfcc, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
 
     return
 
@@ -76,7 +77,7 @@ def convergence_dual_input_maker(symbol,
                                  dual_range=(6,8,10,12), 
                                  smearing=0.008, #in Ry!!!
                                  kpts=(8,8,8),
-                                 conv_thr=1e-6/ry):
+                                 conv_thr=1e-6/ry, output_folder='./'):
     
     #make inputs for convergence calculations: ecutwfc
 
@@ -104,7 +105,7 @@ def convergence_dual_input_maker(symbol,
 
     for d in dual_range:
         input_data['system']['ecutrho'] = d*ewfc
-        write(f'{symbol}_bulk_dual_{d}.pwi', bulkfcc, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+        write(output_path(output_folder, f'{symbol}_bulk_dual_{d}.pwi'), bulkfcc, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
 
     return
 
@@ -117,7 +118,7 @@ def convergence_kpoints_smearing_input_maker(symbol,
                                             smearing_range=(0.5/ry, 0.2/ry, 0.1/ry, 0.05/ry, 0.01/ry, 0.002/ry),#Ry
                                             kpts_range=(6,8,10,12,14,18,22),
                                             conv_thr=1e-6/ry
-                                            ):
+                                            , output_folder='./'):
 
     #make inputs for convergence calculations: ecutwfc
 
@@ -151,7 +152,7 @@ def convergence_kpoints_smearing_input_maker(symbol,
     for k in kpts_range:
         for sm in smearing_range:
             input_data['system']['degauss'] = sm
-            write(f'{symbol}_bulk_kpts_{k}x{k}x{k}_smearing_{sm}.pwi', bulkfcc, input_data=input_data, kpts=[k, k, k], pseudopotentials=pseudos)
+            write(output_path(output_folder, f'{symbol}_bulk_kpts_{k}x{k}x{k}_smearing_{sm}.pwi'), bulkfcc, input_data=input_data, kpts=[k, k, k], pseudopotentials=pseudos)
 
     return
 
@@ -160,7 +161,29 @@ def convergence_kpoints_smearing_input_maker(symbol,
 ### dft benchmarks makers ###
 #############################
 
-def input_from_yaml(parameters, nat, pseudo_dir, calc_type='scf', electron_maxstep=500, mixing_mode='plain'):
+def _gamma_kpoints(value):
+    return value is None or (isinstance(value, str) and value.lower() == 'gamma')
+
+
+def _kpts_grid(value):
+    if _gamma_kpoints(value):
+        return None  # ASE emits the optimized K_POINTS gamma card.
+    if not np.isfinite(value) or value < 1 or int(value) != value:
+        raise ValueError('kpts must be a positive integer or gamma')
+    return [int(value)] * 3
+
+
+def _koffset(parameters):
+    value = parameters.get('koffset', parameters.get('offset', 0))
+    if value is None or (isinstance(value, str) and value.lower() in ('none', 'null')):
+        return 0
+    values = [value] * 3 if np.isscalar(value) else list(value)
+    if len(values) != 3 or any(v not in (0, 1) for v in values):
+        raise ValueError('koffset must be 0, 1, or three 0/1 values')
+    return tuple(int(v) for v in values)
+
+
+def input_from_yaml(parameters, nat, pseudo_dir, calc_type='scf', electron_maxstep=None, mixing_mode='plain'):
     """
     standard input_data maker from a yaml file. A few extra args are available, with default values.
     nat: number of atoms in the system (energy convergence thresholds are extensive)
@@ -186,7 +209,7 @@ def input_from_yaml(parameters, nat, pseudo_dir, calc_type='scf', electron_maxst
         },
         'electrons': {
             'mixing_beta': parameters.get('mixing_beta', 0.7),
-            'electron_maxstep': electron_maxstep,
+            'electron_maxstep': parameters.get('electron_maxstep', 500) if electron_maxstep is None else electron_maxstep,
             'mixing_mode': mixing_mode,
             'conv_thr': parameters.get('econv_eV_peratom')/ry*nat
         },
@@ -223,14 +246,14 @@ def input_iso(symbol, pseudo_dir, parameters, nspin=2, starting_magnetization=1.
     if mixing_beta is not None:
         input_data['electrons']['mixing_beta'] = mixing_beta
 
-    write(f'{symbol}_iso.pwi', iso_atom, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_iso.pwi'), iso_atom, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
     
     return
 
 def input_eos(symbol, alat_0, pseudo_dir, parameters, range_perc=(-3,3), npoints=10):
 
     k       = parameters.get('kpts')
-    offset  = parameters.get('koffset', 0) 
+    offset  = _koffset(parameters)
     pseudos = parameters.get('pseudos')
 
     alats = np.linspace(alat_0*(1.+range_perc[0]/100.), alat_0*(1.+range_perc[1]/100.), npoints)
@@ -238,14 +261,14 @@ def input_eos(symbol, alat_0, pseudo_dir, parameters, range_perc=(-3,3), npoints
     for a in alats:
         bulkfcc = bulk(symbol, 'fcc', a, cubic=True)
         input_data = input_from_yaml(parameters, len(bulkfcc), pseudo_dir, mixing_mode='TF')
-        write(f'{symbol}_fcc_{a:.3f}.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset = offset)
+        write(output_path(parameters.get('output_folder', './'), f'{symbol}_fcc_{a:.3f}.pwi'), bulkfcc, input_data=input_data, kpts=_kpts_grid(k), pseudopotentials=pseudos, koffset = offset)
 
     return
 
 def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters):
 
     k       = parameters.get('kpts')
-    offset  = parameters.get('offset', 0)
+    offset  = _koffset(parameters)
     pseudos = parameters.get('pseudos')
 
     bulkfcc = bulk(symbol, 'fcc', alat_0, cubic=True)
@@ -254,27 +277,27 @@ def input_fcc_relax(symbol, alat_0, pseudo_dir, parameters):
 
     input_data = input_from_yaml(parameters, nat, pseudo_dir, calc_type='vc-relax', mixing_mode='TF')
 
-    write(f'{symbol}_fcc_relax.pwi', bulkfcc, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset=offset)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_fcc_relax.pwi'), bulkfcc, input_data=input_data, kpts=_kpts_grid(k), pseudopotentials=pseudos, koffset=offset)
 
     return
 
 def kpts_equiv(length, kpts_ref, length_ref, floor=True):
+    if _gamma_kpoints(kpts_ref):
+        return None
+    _kpts_grid(kpts_ref)  # Validate the reference mesh.
+    if not np.isfinite(length) or length <= 0:
+        raise ValueError('cell length must be positive')
+    k = kpts_ref * length_ref / length
+    rounded = np.floor(k) if floor else np.ceil(k)
+    return max(1, int(rounded))
 
-    k = kpts_ref*length_ref/length
-
-    if floor==False:
-        k +=1
-
-    return k
 
 def kpts_surf_calculator(cell, kpts_equivalent_conventional, a_ref, floor=True):
-
-    Lx = cell[0][0]
-    Ly = cell[1][1]
-
+    if _gamma_kpoints(kpts_equivalent_conventional):
+        return None
+    Lx, Ly = np.linalg.norm(cell[0]), np.linalg.norm(cell[1])
     kx = kpts_equiv(Lx, kpts_equivalent_conventional, a_ref, floor)
     ky = kpts_equiv(Ly, kpts_equivalent_conventional, a_ref, floor)
-
     return [kx, ky, 1]
 
 def input_surfaces(symbol, pseudo_dir, vacuum, parameters, size=(1,1,8), relax=True, relax_layers=2 ):
@@ -292,7 +315,7 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters, size=(1,1,8), relax=T
 
     ref_lattice = parameters.get('latticeconstant')[symbol]
     kpts_equiv  = parameters.get('kpts')
-    offset      = parameters.get('koffset', 0)
+    offset      = _koffset(parameters)
     pseudos     = parameters.get('pseudos')
 
     s111 = fcc111(symbol, size, a=ref_lattice, vacuum=vacuum)
@@ -318,9 +341,9 @@ def input_surfaces(symbol, pseudo_dir, vacuum, parameters, size=(1,1,8), relax=T
 
     input_data = input_from_yaml(parameters, nat, pseudo_dir, calc_type=mode)
 
-    write(f'{symbol}_surf_111_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s111, kpts=k111, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
-    write(f'{symbol}_surf_110_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s110, kpts=k110, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
-    write(f'{symbol}_surf_100_{size[0]}x{size[1]}x{size[2]}_relax.pwi', s100, kpts=k100, koffset=offset, pseudopotentials=pseudos, input_data=input_data)    
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_surf_111_{size[0]}x{size[1]}x{size[2]}_relax.pwi'), s111, kpts=k111, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_surf_110_{size[0]}x{size[1]}x{size[2]}_relax.pwi'), s110, kpts=k110, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_surf_100_{size[0]}x{size[1]}x{size[2]}_relax.pwi'), s100, kpts=k100, koffset=offset, pseudopotentials=pseudos, input_data=input_data)
 
     return
 
@@ -344,9 +367,9 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters):
 
     input_data = input_from_yaml(parameters, len(ico), pseudo_dir, calc_type='relax', mixing_mode='local-TF')
 
-    write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
-    write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
-    write(f'{symbol}_Dh_{len(deca)}_relax.pwi', deca, input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Ih_{len(ico)}_relax.pwi'),  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Oh_{len(octa)}_relax.pwi'), octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Dh_{len(deca)}_relax.pwi'), deca, input_data=input_data, kpts=None, pseudopotentials=pseudos)
 
 
     #147-atoms
@@ -360,13 +383,13 @@ def input_isomers(symbol, pseudo_dir, vacuum, parameters):
 
     input_data = input_from_yaml(parameters, len(ico), pseudo_dir, calc_type='relax', mixing_mode='local-TF')
 
-    write(f'{symbol}_Ih_{len(ico)}_relax.pwi',  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
-    write(f'{symbol}_Oh_{len(octa)}_relax.pwi', octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
-    write(f'{symbol}_Dh_{len(deca)}_relax.pwi', deca, input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Ih_{len(ico)}_relax.pwi'),  ico,  input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Oh_{len(octa)}_relax.pwi'), octa, input_data=input_data, kpts=None, pseudopotentials=pseudos)
+    write(output_path(parameters.get('output_folder', './'), f'{symbol}_Dh_{len(deca)}_relax.pwi'), deca, input_data=input_data, kpts=None, pseudopotentials=pseudos)
 
     return
 
-def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, parameters, smearing_divider=1.0):
+def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, parameters, smearing_divider=1.0, mixing_beta=0.05):
 
     kpts    = None
     pseudos = parameters.get('pseudos') 
@@ -374,7 +397,8 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
 
     input_data = input_from_yaml(parameters, nat, pseudo_dir, electron_maxstep=1500, mixing_mode='local-TF')
 
-    input_data['electrons']['mixing_beta'] = 0.05
+    input_data['electrons']['mixing_beta'] = mixing_beta
+    input_data['system']['degauss'] = input_data['system']['degauss']/smearing_divider
 
     #generate structures
     for d in np.linspace(separation_range[0], separation_range[1], npoints):
@@ -382,7 +406,7 @@ def input_dimers(symbol, separation_range, npoints, pseudo_dir, vacuum, paramete
         dimer = Atoms([symbol]*2, [[0.,0.,0.], [0.,0.,d]])
         dimer.center(vacuum = vacuum) 
 
-        write(f'{symbol}_dimer_{d:.3f}.pwi', dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
+        write(output_path(parameters.get('output_folder', './'), f'{symbol}_dimer_{d:.3f}.pwi'), dimer, input_data=input_data, kpts=kpts, pseudopotentials=pseudos)
     
     return
 
@@ -442,7 +466,7 @@ def input_phonons(symbol,
 
     pseudos = parameters.get('pseudos')
     k_conv_cell = parameters.get('kpts')
-    koff = parameters.get('koffset', 0)
+    koff = _koffset(parameters)
 
     for i, supercell in enumerate(phonon.supercells_with_displacements):
 
@@ -450,9 +474,9 @@ def input_phonons(symbol,
 
         k = kpts_equiv(atoms.cell.lengths()[0], k_conv_cell, alat_relax)
 
-        write(f'{symbol}_{files_prefix}_{i}.pwi', atoms, input_data=input_data, kpts=[k,k,k], pseudopotentials=pseudos, koffset=koff)
+        write(output_path(parameters.get('output_folder', './'), f'{symbol}_{files_prefix}_{i}.pwi'), atoms, input_data=input_data, kpts=_kpts_grid(k), pseudopotentials=pseudos, koffset=koff)
     
-    phonon.save(f'{symbol}_{phonon_file}.yaml')
+    phonon.save(output_path(parameters.get('output_folder', './'), f'{symbol}_{phonon_file}.yaml'))
 
     return
 
@@ -500,7 +524,7 @@ def parse_qe_results(symbol, E_iso_ry=None, directory="."):
     volumes, energies = [], []
     for f in eos_files:
         try:
-            atoms = read(os.path.join(directory, f))
+            atoms = read(f)
             volumes.append(atoms.get_volume())
             energies.append(atoms.get_potential_energy())
         except Exception as e:
@@ -649,27 +673,30 @@ def parse_phonons(files, phonon_file_in, phonon_file_out='phonopy_params.yaml', 
 
 def write_all_inputs(args): #args=sys.argv
 
-    if len(args)<4:
-        sys.exit(f'usage: {args} chemical_symbol vacuum pseudo_dir')
+    if len(args) != 4:
+        sys.exit('usage: reference_dft_maker.py input <chemical_symbol> <parameters.yaml>')
 
-    with open('parameters.yml', 'r') as f:
+    #is there some reason to keep these separate?
+    # with open('parameters.yml', 'r') as f:
+    #     parameters = yaml.safe_load(f)
+
+    # with open('parameters_relax.yml', 'r') as f:
+    #     parameters_relax = yaml.safe_load(f)
+
+    with open(args[3], 'r') as f:
         parameters = yaml.safe_load(f)
 
-    with open('parameters_relax.yml', 'r') as f:
-        parameters_relax = yaml.safe_load(f)
-
     symbol     = args[2] #chemical symbol
-    vacuum     = float(args[3]) #vacuum for surfs
-    pseudo_dir = args[4] #pseudopotentials directory 
+    vacuum     = parameters.get('vacuum')
+    pseudo_dir = parameters.get('pseudo_dir')
     
-
     alat_0     = parameters.get('latticeconstant')[symbol]
 
     input_iso(symbol, pseudo_dir, parameters, smearing_divider=100.)
     input_eos(symbol, alat_0, pseudo_dir, parameters)
-    input_fcc_relax(symbol, alat_0, pseudo_dir, parameters_relax)
-    input_surfaces(symbol, pseudo_dir, vacuum, parameters_relax)
-    input_isomers(symbol, pseudo_dir, vacuum, parameters_relax)
+    input_fcc_relax(symbol, alat_0, pseudo_dir, parameters)
+    input_surfaces(symbol, pseudo_dir, vacuum, parameters)
+    input_isomers(symbol, pseudo_dir, vacuum, parameters)
     input_dimers(symbol, separation_range=(alat_0/1.412*0.65, alat_0/1.412*3.0), npoints=10, pseudo_dir=pseudo_dir, vacuum=vacuum, parameters=parameters, smearing_divider=100.)
 
 def plot_references(symbol, in_path=None, directory='.'):
@@ -739,12 +766,13 @@ if __name__=='__main__':
     if len(sys.argv)<2 or (not (sys.argv[1]=='input' or sys.argv[1]=='parse' or sys.argv[1] == 'plot')):
         print(f'USAGE: {sys.argv[0]} <mode> <args>')
         print('--------------------------')
-        print('if <mode>==input, args should be: <chemical_symbol> <vacuum_for_surfaces_and_clusters> <pseudopotenials_directory>')
-        print('and parameters.yml and parameters_relax.yml should be present in the execution folder.')
+        print('if <mode>==input, args should be: <chemical_symbol> <parameters.yaml>')
+        print('vacuum, pseudo_dir, and output_folder are read from the parameter file.')
         print('--------------------------')
         print('if <mode>==parse, args should be: <chemical_symbol> [isolated_atom_energy_in_Rydberg - optional]')
         print('--------------------------')
         print('if <mode> == "plot", args should be: <chemical_symbol>')
+        sys.exit(1)
 
     if sys.argv[1] == 'input':
         write_all_inputs(sys.argv)

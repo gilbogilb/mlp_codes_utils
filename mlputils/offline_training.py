@@ -16,6 +16,7 @@ import random
 import yaml
 from datetime import datetime
 from copy import deepcopy
+from mlputils._outputs import output_path, in_output_folder
 
 import flare
 from flare.bffs.sgp.calculator import SGP_Calculator
@@ -30,9 +31,10 @@ from flare.atoms import FLARE_Atoms
 from ase.io import read,write
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
+from ase.calculators.calculator import PropertyNotImplementedError
 
 from mlputils.makesets import *
-from mlputils.benchmark import compute_test_errors
+from mlputils.benchmark import compute_test_errors, get_isolated_atom_energy
 
 try:
     from tqdm import tqdm
@@ -132,8 +134,9 @@ def log_errors(gp_model, testsets):
 #TODO: REFINE
 def log_errors_gibo(errors, file_maes_e, file_maes_f, step):
     #only one test set here
-    str_e = f"{step}\t{errors[0]['test.xyz']['energy_per_atom']['mae']}\n"
-    str_f = f"{step}\t{errors[0]['test.xyz']['forces']['mae']}\n"
+    metrics = next(iter(errors[0].values()))
+    str_e = f"{step}\t{metrics['energy_per_atom']['mae']}\n"
+    str_f = f"{step}\t{metrics['forces']['mae']}\n"
     file_maes_e.write(str_e)
     file_maes_f.write(str_f)
     file_maes_e.flush()
@@ -163,7 +166,6 @@ def optimize_hyps(gp_model,
                 minhyps,
                 maxhyps,
                 max_iterations,
-                bounds,
                 gtol,
                 loss_function_config):
 
@@ -290,7 +292,7 @@ def initialize_gp(
     return gp_model_init, descriptors, kernels
 
 
-def model_from_dict(structuresdict, sparse_indices, species_code, hyps, modelstruct, isolated_energies=None):
+def model_from_dict_old(structuresdict, sparse_indices, species_code, hyps, modelstruct, isolated_energies=None):
     """
     Retrain a gp model from a dictionary
     """
@@ -328,13 +330,18 @@ def ase2dict(struct: Atoms) -> dict :
     """
     Returns the dictionary with the FLARE information from ASE Atoms object struct
     """
+    try:
+        stresses = struct.get_stress().tolist()
+    except PropertyNotImplementedError:
+        stresses = None
+
     structdict = dict({
         "numbers"  : struct.numbers.tolist(),
         "positions": struct.positions.tolist(),
         "cell"     : struct.cell.tolist(),
         "pbc"      : struct.pbc.tolist(),
         "info"     : dict({'rel_efs_noise': [1, 1, 1]}),
-        "results"  : dict({"forces": struct.arrays["forces"].tolist() if "forces" in struct.arrays else struct.get_forces().tolist() , "energy" : [struct.calc.get_potential_energy().tolist()], "stresses": struct.get_stress().tolist() ,
+        "results"  : dict({"forces": struct.arrays["forces"].tolist() if "forces" in struct.arrays else struct.get_forces().tolist() , "energy" : [float(struct.get_potential_energy())], "stresses": stresses ,
             "stds": [ [0.,0.,0.] for _ in range(len(struct))], "local_energy_stds" : [ 0. for _ in range(len(struct))] , "stress_stds" : [0. for _ in range(6)]})
         })
     return structdict
@@ -349,7 +356,8 @@ def dict2ase(structdict : dict) -> Atoms :
                    pbc = structdict["pbc"])
     forces = structdict["results"]["forces"]
     energy = structdict["results"]["energy"][0]
-    calc = SinglePointCalculator(atoms=struct, energy=energy, forces=forces, stress=[ 0 for _ in range(6) ] )
+    stress = structdict["results"].get("stresses")
+    calc = SinglePointCalculator(atoms=struct, energy=energy, forces=forces, stress=stress)
     struct.calc = calc
 
     return struct
@@ -437,10 +445,33 @@ def get_dft_data(conf):
 
     return dft_energy, dft_forces, flare_stress
 
+def model_from_json_dict(json_dict_file):
+    #from flare.learners.OTF class
+    #flare_calc_dict = json.load(open(json_dict_file))["flare_calc"]
+
+    # Build FLARE_Calculator from dict
+    #if flare_calc_dict["class"] == "FLARE_Calculator":
+    #     flare_calc = FLARE_Calculator.from_file(json_dict_file)
+    #     _kernels = None
+    #     # Build SGP_Calculator from dict
+    #     # TODO: we still have the issue that the c++ kernel needs to be
+    #     # in the current space, otherwise there is Seg Fault
+    #     # That's why there is the _kernels
+    # elif flare_calc_dict["class"] == "SGP_Calculator":
+    #     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    # else:
+    #     raise TypeError(f"The calculator {json_dict_file} is not recognized.")
+
+
+    #todo: generalize
+
+    flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    return flare_calc, _kernels
+
 
 def add_envs(json_file, atoms, indices, json_file_out):
 
-    flare_calc, kernels = model_from_json(json_file)
+    flare_calc, kernels = model_from_json_dict(json_file)
     flare_atoms = FLARE_Atoms.from_ase_atoms(atoms, copy_calc_results=True)
     energy, forces, stress = get_dft_data(atoms)
     flare_calc.gp_model.update_db(flare_atoms, forces=forces, energy=energy, stress=stress, custom_range=indices)
@@ -477,6 +508,7 @@ def train_offline(config, train_set, test_set):
     #isolated_energies = config["isolated_energies"]
 
     files_prefix = config["files_prefix"]
+    output_folder = config.get("output_folder", "./")
 
     sparse_indices      = []
     training_structures = []
@@ -486,11 +518,11 @@ def train_offline(config, train_set, test_set):
     last_optim   = 0
     step         = 0
 
-    file_log    = open(f"training_{files_prefix}.log",'w')
-    file_hyps   = open(f"hyps_{files_prefix}.dat",'w')
-    file_lik    = open(f"lik_{files_prefix}.dat",'w')
-    file_maes_e = open(f"e_maes_{files_prefix}.dat",'w')
-    file_maes_f = open(f"f_maes_{files_prefix}.dat",'w')
+    file_log    = open(output_path(output_folder, f"training_{files_prefix}.log"),'w')
+    file_hyps   = open(output_path(output_folder, f"hyps_{files_prefix}.dat"),'w')
+    file_lik    = open(output_path(output_folder, f"lik_{files_prefix}.dat"),'w')
+    file_maes_e = open(output_path(output_folder, f"e_maes_{files_prefix}.dat"),'w')
+    file_maes_f = open(output_path(output_folder, f"f_maes_{files_prefix}.dat"),'w')
 
     #log initial stuff
     file_log.write("You are running Offline Learner version 4-11-2025\n")
@@ -566,7 +598,7 @@ def train_offline(config, train_set, test_set):
                 oracle_calls +=1
 
                 #get high uncertainty configs
-                indices = np.where(stds>add_threshold)[0]
+                indices = np.flatnonzero(np.any(np.asarray(stds) > add_threshold, axis=1))
                 sgp.update_db(flare_conf, forces=forces, energy=energy, stress=stress, custom_range=indices) #different from davide, but as in flare-otf. Could it be differnt for the full set?
                 nsparse += len(indices)
                 conf.info["sparse_set"] = np.array(indices)
@@ -604,7 +636,8 @@ def train_offline(config, train_set, test_set):
                 #log_errors(sgp.sparse_gp, test_set) TODO - for backwards compatibility
                 #check errors for the learning curve
                 E_iso = iso_energies[0] #TODO: extend to multi-specie
-                errors = compute_test_errors(flare_calc, 'test.xyz', E_iso, use_norm=False, tqdm_extra_string=f'step={step}')
+                E_iso_model = get_isolated_atom_energy(flare_calc, conf.get_chemical_symbols()[0])
+                errors = compute_test_errors(flare_calc, {'offline_test': test_set}, E_iso, E_iso_model, use_norm=False, out_folder=output_folder, tqdm_extra_string=f'step={step}')
                 log_errors_gibo(errors, file_maes_e, file_maes_f, step)
 
                 file_lik.write(f"{step}\t{neglik}\t{nsparse}\n")
@@ -620,10 +653,11 @@ def train_offline(config, train_set, test_set):
     ########
 
     #build map and write model - only here?
-    flare_calc.build_map()
-    flare_calc.write_model(config['files_prefix']+'_model.json') #this way is missing some stuff? like results? could have to be fixed
+    with in_output_folder(output_folder):
+        flare_calc.build_map()
+    flare_calc.write_model(output_path(output_folder, config['files_prefix']+'_model.json')) #this way is missing some stuff? like results? could have to be fixed
 
-    write('added_structures.xyz', training_structures)
+    write(output_path(output_folder, 'added_structures.xyz'), training_structures)
 
     #end logging
     now = datetime.now()
@@ -639,28 +673,6 @@ def train_offline(config, train_set, test_set):
 
     return
 
-def model_from_dict(json_dict_file):
-    #from flare.learners.OTF class
-    #flare_calc_dict = json.load(open(json_dict_file))["flare_calc"]
-
-    # Build FLARE_Calculator from dict
-    #if flare_calc_dict["class"] == "FLARE_Calculator":
-    #     flare_calc = FLARE_Calculator.from_file(json_dict_file)
-    #     _kernels = None
-    #     # Build SGP_Calculator from dict
-    #     # TODO: we still have the issue that the c++ kernel needs to be
-    #     # in the current space, otherwise there is Seg Fault
-    #     # That's why there is the _kernels
-    # elif flare_calc_dict["class"] == "SGP_Calculator":
-    #     flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
-    # else:
-    #     raise TypeError(f"The calculator {json_dict_file} is not recognized.")
-
-
-    #todo: generalize
-
-    flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
-    return flare_calc, _kernels
 
 def main(config_file):
 

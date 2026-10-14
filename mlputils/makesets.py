@@ -8,6 +8,7 @@ import random
 import sys
 import yaml
 from collections import Counter
+from mlputils._outputs import output_path
 
 def make_random_sets(files, test_ratio=0.1, valid_ratio=0.0, seed=None, per_file_splitting=True, verbose=False):
     #per file splitting: split in test, train and validation for each file rather than at random from the full set of all provided configurations
@@ -190,65 +191,65 @@ def sort_by_cnap_number(frames, cutoff, pbc=True):
 
     return sorted_frames, cnap_ratios[ids], ids
 
-def split_bulk_surf_clust(atoms):
-    """attempt separating different structures (bulk, surfaces, clusters) based
-    on the number density of atoms (generally three ranges are present)
+# def split_bulk_surf_clust(atoms):
+#     """attempt separating different structures (bulk, surfaces, clusters) based
+#     on the number density of atoms (generally three ranges are present)
     
-    notice: this generally works if you have performed DFT calculations with plane waves, 
-    so you have to include vacuum and the amount of total vaucum depends on the configuration type
+#     notice: this generally works if you have performed DFT calculations with plane waves, 
+#     so you have to include vacuum and the amount of total vaucum depends on the configuration type
     
-    This sometimes does not work. check it out
-    """
+#     TODO: This sometimes does not work. check it out
+#     """
 
-    bulk, surf, clust = [], [], []
-    densities = []
-    for a in atoms:
-        Vcell = a.get_cell().volume
-        N = float(len(a))
-        densities.append(N / Vcell)
+#     bulk, surf, clust = [], [], []
+#     densities = []
+#     for a in atoms:
+#         Vcell = a.get_cell().volume
+#         N = float(len(a))
+#         densities.append(N / Vcell)
 
-    # Find two thresholds using kmeans-style split on sorted densities
-    sorted_dens = sorted(set(densities))
+#     # Find two thresholds using kmeans-style split on sorted densities
+#     sorted_dens = sorted(set(densities))
     
-    #llm stuff
-    def find_split(values):
-        """Find the best split point that maximizes inter-group distance."""
-        best_split = None
-        best_gap = -1
-        for i in range(len(values) - 1):
-            gap = values[i + 1] - values[i]
-            if gap > best_gap:
-                best_gap = gap
-                best_split = (values[i] + values[i + 1]) / 2.0
-        return best_split
+#     #llm stuff
+#     def find_split(values):
+#         """Find the best split point that maximizes inter-group distance."""
+#         best_split = None
+#         best_gap = -1
+#         for i in range(len(values) - 1):
+#             gap = values[i + 1] - values[i]
+#             if gap > best_gap:
+#                 best_gap = gap
+#                 best_split = (values[i] + values[i + 1]) / 2.0
+#         return best_split
 
-    # Find two split points dividing densities into three groups
-    if len(sorted_dens) < 2:
-        return atoms, [], []
+#     # Find two split points dividing densities into three groups
+#     if len(sorted_dens) < 2:
+#         return atoms, [], []
 
-    split1 = find_split(sorted_dens)
-    if split1 is None:
-        return atoms, [], []
+#     split1 = find_split(sorted_dens)
+#     if split1 is None:
+#         return atoms, [], []
 
-    lower = [v for v in sorted_dens if v < split1]
-    upper = [v for v in sorted_dens if v >= split1]
-    split2 = find_split(upper) if len(upper) > 1 else None
+#     lower = [v for v in sorted_dens if v < split1]
+#     upper = [v for v in sorted_dens if v >= split1]
+#     split2 = find_split(upper) if len(upper) > 1 else None
 
-    for a, d in zip(atoms, densities):
-        if split2 is not None:
-            if d < split1:
-                clust.append(a)
-            elif d < split2:
-                surf.append(a)
-            else:
-                bulk.append(a)
-        else:
-            if d < split1:
-                clust.append(a)
-            else:
-                bulk.append(a)
+#     for a, d in zip(atoms, densities):
+#         if split2 is not None:
+#             if d < split1:
+#                 clust.append(a)
+#             elif d < split2:
+#                 surf.append(a)
+#             else:
+#                 bulk.append(a)
+#         else:
+#             if d < split1:
+#                 clust.append(a)
+#             else:
+#                 bulk.append(a)
 
-    return bulk, surf, clust
+#     return bulk, surf, clust
 
 def make_sets(config):
     """
@@ -265,6 +266,7 @@ def make_sets(config):
 
     style = config.get("dataset_style", 'random') #default style is random
     seed  = config.get("seed")
+    test_split = config.get('test_set_split', 0.1)
 
     if style == "injected":
 
@@ -274,6 +276,7 @@ def make_sets(config):
         files = config.get('bulk_files') + config.get('surf_files') + config.get('clusters_files')
         train, test, _ = make_sparsely_injected_sets(files, 
                                                     config.get("injection_files"),
+                                                    test_ratio=test_split,
                                                     injection_frequency=injection_frequency,
                                                     stop_inject= stop_inject,
                                                     seed=config.get("seed"))
@@ -281,14 +284,14 @@ def make_sets(config):
     elif style == "random":
 
         files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
-        train, test, _ = make_random_sets(files, seed=seed)
+        train, test, _ = make_random_sets(files, test_ratio=test_split, seed=seed)
 
     elif style == "ordered":
 
         bulks  = config.get('bulk_files')
         surfs  = config.get('surf_files')
         clusts = config.get('clusters_files')
-        [train_b, train_s, train_c], [test_b, test_s, test_c], _ = make_sequential_sets(bulks, surfs, clusts, seed=seed)
+        [train_b, train_s, train_c], [test_b, test_s, test_c], _ = make_sequential_sets(bulks, surfs, clusts, test_ratio=test_split, seed=seed)
 
         train = train_b + train_s + train_c
         test  = test_b + test_s + test_c
@@ -301,7 +304,7 @@ def make_sets(config):
 
         #just like random
         files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
-        train, test, _ = make_random_sets(files, seed=seed)
+        train, test, _ = make_random_sets(files, test_ratio=test_split, seed=seed)
 
         #sort by cnap number over atoms number
         cutoff = config.get('solvation_shell_cutoff')
@@ -312,7 +315,7 @@ def make_sets(config):
 
         #just like random
         files = config.get("bulk_files",[]) + config.get("surf_files",[]) + config.get("clusters_files",[]) + config.get("extra_files",[])
-        train, test, _ = make_random_sets(files, seed=seed)
+        train, test, _ = make_random_sets(files, test_ratio=test_split, seed=seed)
 
         #sort by gcn distribution standard deviation
         cutoff = config.get('solvation_shell_cutoff')   
@@ -325,8 +328,8 @@ def make_sets(config):
 
     #if style is intact you already have your train set and test set. otherwise, export them.
     if not style == 'intact':
-        write('train.xyz', train)
-        write('test.xyz', test)
+        write(output_path(config.get('output_folder', './'), 'train.xyz'), train)
+        write(output_path(config.get('output_folder', './'), 'test.xyz'), test)
     
     return train, test
 

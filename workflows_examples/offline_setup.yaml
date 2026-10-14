@@ -1,3 +1,4 @@
+output_folder: output/  # Directory for generated files; created if necessary
 files_prefix : "cnaps_sorted"
 call_threshold : 0.001
 add_threshold : 0.0001
@@ -13,9 +14,9 @@ seed : 123  # Seed for rearranging singular datasets and choosing train configs
 when_rollback : "discard" # or accept. Decides what happens when hyps optim fail. If "discard", both training set and hyps are reset to before the frame. If "accept" , only reset GPs.
 nr_initial_envs : 5 # The number of environments chosen randomly from the first configuration to bootstrap the offline learning
 
-optimize_every : 2 # Every how many oracle calls optimization of hyps is performed - e.g. every 2,3 etc...
-min_optimize: 40
-max_optimize: 55
+optimize_every : 1 # Every how many oracle calls optimization of hyps is performed - e.g. every 2,3 etc...
+min_optimize: 1
+max_optimize: 5
 
 # Set up FLARE calculator with (sparse) Gaussian process
 flare_calc:
@@ -54,7 +55,6 @@ optimizer_options:
       - 0
   opt_method: "L-BFGS-B"
   gtol : 1.0e-3
-  bounds : "None"
   max_iterations : 100
   minhyps : #If hyps go below this, rollback
     - 0.
@@ -68,22 +68,22 @@ optimizer_options:
     - 0.01
 
 
-dataset_style:        #random, ordered, intact, injected, cnap, gcn
+dataset_style: 'random'       #random, ordered, intact, injected, cnap, gcn
+test_set_split: 0.2 #how many of the entire set of structures going into the test set. - igonred if intact
+
 
 bulk_files:
-  - 
+  - 'bulk_5_configs.xyz'
 
-surf_files:
-  - 
+surf_files: []
 
-clusters_files:
-  -
+clusters_files: []
 
 #######################################
 ###only relevant for cnap, gcn style###
 #######################################
 
-solvation_shell_cutoff:  #generally 0.88*alat
+solvation_shell_cutoff:  #generally 0.85*alat
 
 #####################################
 
@@ -108,7 +108,7 @@ injection_files:
 ###only relevant for intact style###
 ####################################
 
-train_file:
-test_file:
+train_file: 
+test_file: 
 
 #####################################
