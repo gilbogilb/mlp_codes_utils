@@ -155,6 +155,7 @@ See `workflows_examples/` for complete config files.
 - Single-specie systems only (multi-specie not implemented)
 - Units: eV, Angstrom, ASE Voigt stress convention
 - Output files written to specified output folder
+- add uncertainty calculations! for sgp or committee-mace
 
 ## TODO
 
