@@ -10,3 +10,4 @@ build/
 !tests/test_reference_inputs.py
 !tests/test_compute_test_errors.py
 workflows_examples/output/
+!tests/test_accept_mode.py

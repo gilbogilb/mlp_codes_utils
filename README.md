@@ -61,102 +61,21 @@ python -m mlputils.reference_dft_maker input chemical_symbol input_dft_parameter
 python -m mlputils.reference_dft_maker parse chemical_symbol isolated_atom_energy
 ```
 
-Unfortunately isolated atom energy is hard to parse for ase if nspin=2, so you ahve to give it to the parser to compute reference values.
-The code produces `{symbol}_reference_data.yaml` with reference data such as lattice constant, cohesive energy, bulk modulus, and surface energies.
+The parameter file supplies `vacuum`, `pseudo_dir`, and `output_folder`.
+Use `kpts: gamma` for Gamma-only calculations, or a positive integer for the
+conventional-cell Monkhorst-Pack mesh (rescaled for slabs and phonon supercells).
+Use `koffset: null` or `0` for an unshifted mesh, `1` for shifts in all directions,
+or a three-element list such as `[1, 0, 1]`. Gamma inputs ignore mesh offsets.
 
-### 2. Create train/test datasets
+## Offline optimization rollback
 
-Prepare a YAML config and run:
-
-```bash
-python -m mlputils.makesets dataset_config.yaml
+```yaml
+when_rollback: accept
 ```
 
-Outputs `train.xyz` and `test.xyz`. Supported splitting strategies: `random`, `ordered`, `injected`, `intact`, `cnap`, `gcn`.
-
-### 3. Train a FLARE potential
-
-```bash
-python -m mlputils.offline_training training_config.yaml
-```
-
-Runs the offline active-learning loop: initializes a Sparse GP, iteratively adds high-uncertainty environments, periodically optimizes hyperparameters, and writes the final model JSON.
-
-### 4. Benchmark against DFT
-
-```bash
-python -m mlputils.benchmark benchmark_config.yaml
-```
-
-Computes bulk EOS, surface energies, test set errors (MAE/RMSE), adsorbate/dimer curves, and optionally phonons, cluster excess energies, and MD performance. Outputs `{calculator}_benchmark.yaml`.
-
-## Supported calculators
-
-| Calculator | Key | Notes |
-|-----------|-----|-------|
-| FLARE via LAMMPS | `flare_lammps` | Recommended for FLARE models |
-| MACE | `mace` | |
-| MACE-MP | `mace_mp` | Foundation model |
-| FLARE native | `flare` | Not yet implemented |
-| NequIP | `nequip` | Not yet implemented |
-
-Set `calculator` and `model_file` in your benchmark YAML config.
-It should be pretty easy to modify the code so that you use any ASE calculator you like.
-
-## YAML config reference
-
-### Benchmark config (`benchmark_setup.yaml`)
-
-These are reference values which are compared to those computed with the mlp during benchmarking. Most of these keys are consistent with the dictionary produced by reference_data_maker.py
-
-| Key | Description |
-|-----|-------------|
-| `symbol` | Chemical symbol (e.g. `'Cu'`) |
-| `E_iso` | DFT isolated atom energy |
-| `fcc_lattice_constant` | Reference lattice constant (Angstrom) |
-| `cohesive_energy` | Reference cohesive energy per atom (eV) |
-| `Bulk_modulus` | Reference bulk modulus (GPa) |
-| `111/110/100_surface_energy` | Reference surface energies (J/m^2) |
-| `calculator` | Calculator type (see table above) |
-| `model_file` | Path to trained model |
-| `test_set_file` | Test set XYZ file(s) |
-| `err_method` | `'mae'` or `'rmse'` |
-
-### Training config (`offline_setup.yaml`)
-
-| Key | Description |
-|-----|-------------|
-| `flare_calc` | Full FLARE GP configuration block |
-| `dataset_style` | Splitting strategy |
-| `bulk_files`, `surf_files`, `clusters_files` | Dataset input files |
-| `call_threshold` | Uncertainty threshold to trigger oracle call |
-| `add_threshold` | Uncertainty threshold to add environments to sparse set |
-| `optimize_every` | Frequency of hyperparameter optimization |
-| `optimizer_options` | Loss function, method, bounds, and iteration limits |
-
-See `workflows_examples/` for complete config files.
-
-## Dependencies
-
-| Package | Used in | Required? | Extra |
-|---------|---------|-----------|-------|
-| `ase` | Everywhere | Yes | — |
-| `numpy` | Everywhere | Yes | — |
-| `scipy` | `offline_training.py`, `makesets.py` | Yes | — |
-| `pyyaml` | Config loading | Yes | — |
-| `mir-flare` | `offline_training.py` | For FLARE training | `flare` |
-| `mace` | `benchmark.py` | For MACE models | `mace` |
-| `phonopy` | `benchmark.py`, `reference_dft_maker.py` | For phonons | `phonopy` |
-| `snow` | `makesets.py`, `benchmark.py` | For GCN/CNAP sorting | `snow` |
-| `lammps` Python | `benchmark.py` | For LAMMPS-based FLARE or LAMMPS calculators in general | — |
-
-## Conventions
-
-- Single-specie systems only (multi-specie not implemented)
-- Units: eV, Angstrom, ASE Voigt stress convention
-- Output files written to specified output folder
-- add uncertainty calculations! for sgp or committee-mace
-
-## TODO
-
- - add a plotting tool/list of codes
+`accept` is the default. If optimized hyperparameter magnitudes are nonfinite or
+fall outside the existing strict `minhyps < abs(hyps) < maxhyps` limits, the learner
+restores the parameters in use immediately before that optimization. Newly added
+training structures and sparse environments stay in the GP. Matrices are rebuilt
+using the restored parameters, and logs record the rollback and actual parameters
+in use. `discard` is not implemented and is rejected before training begins.
