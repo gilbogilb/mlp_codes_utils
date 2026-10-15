@@ -1,5 +1,4 @@
-
-#some code by davide alimonti
+#some code by davide alimonti (thanks!)
 #extensions: #add stress in ase2flare?
 #add stress error
 #take care with randomness - here, np.random is used, should set the seed in np as well;
@@ -14,19 +13,10 @@ import json
 import tempfile
 import random
 import yaml
+import warnings
 from datetime import datetime
 from copy import deepcopy
 from mlputils._outputs import output_path, in_output_folder
-
-import flare
-from flare.bffs.sgp.calculator import SGP_Calculator
-from flare.bffs.gp.calculator import FLARE_Calculator
-from flare.bffs.sgp._C_flare import   B2, NormalizedDotProduct, SparseGP, Structure
-from flare.bffs.sgp import SGP_Wrapper
-from flare.learners.otf import OTF
-from flare.io import otf_parser
-from flare.scripts.otf_train import get_sgp_calc
-from flare.atoms import FLARE_Atoms
 
 from ase.io import read,write
 from ase import Atoms
@@ -50,6 +40,7 @@ def ase2flare(struct, config, descriptors):
     """
     Takes an ASE structure and returns a FLARE structure object
     """
+    from flare.bffs.sgp._C_flare import Structure
 
     species_code = config["species_code"]
     isolated_energies = config["isolated_energies"]
@@ -92,7 +83,7 @@ def flare_atoms_to_structure(flare_atoms):
         struc.forces = flare_atoms.get_forces().flatten()
         try:
             struc.stresses = flare_atoms.get_stress()
-        except:
+        except Exception:
             pass
 
     return struc
@@ -109,7 +100,7 @@ def check_mae(gp_model, train_struct):
     force_components_errors = (train_struct.forces - train_struct.mean_efs[1:-6]).tolist()
     return energy_error, np.array(force_components_errors)
 
-def log_errors(gp_model, testsets):
+def log_errors(gp_model, testsets, file_maes_e, file_maes_f, step):
     """
     Measures the error incurred by the potential on a collection of testsets (made of FLARE structures)
     """
@@ -296,6 +287,8 @@ def initialize_gp(
     Create an empty model with working kernels.
     Also creates the kernel and descriptor objects.
     """
+    from flare.bffs.sgp._C_flare import B2, NormalizedDotProduct, SparseGP
+
     kernels = [ NormalizedDotProduct(sigma , power) ]
     descriptors = [ B2(radial_basis_type,cutoff_function,[0,cutoff],[] , [nspecies , nmax, lmax]) ]
     gp_model_init = SparseGP( kernels, sigma_e , sigma_f, sigma_s)
@@ -306,6 +299,8 @@ def model_from_dict_old(structuresdict, sparse_indices, species_code, hyps, mode
     """
     Retrain a gp model from a dictionary
     """
+    from flare.bffs.sgp._C_flare import B2, NormalizedDotProduct, SparseGP, Structure
+
     if isolated_energies is None:
         isolated_energies = {}
 
@@ -480,6 +475,7 @@ def model_from_json_dict(json_dict_file):
 
 
 def add_envs(json_file, atoms, indices, json_file_out):
+    from flare.atoms import FLARE_Atoms
 
     flare_calc, kernels = model_from_json_dict(json_file)
     flare_atoms = FLARE_Atoms.from_ase_atoms(atoms, copy_calc_results=True)
@@ -491,6 +487,11 @@ def add_envs(json_file, atoms, indices, json_file_out):
 
 
 def train_offline(config, train_set, test_set):
+    from flare.atoms import FLARE_Atoms
+    from flare.scripts.otf_train import get_sgp_calc
+
+    if "seed" in config:
+        np.random.seed(config["seed"])
 
     #initialize variables and objects
     #add write to json
@@ -609,7 +610,10 @@ def train_offline(config, train_set, test_set):
                 step += 1
                 continue
 
-            if np.max(stds) > call_threshold:
+            # Reduce 2D (nat, 3) to 1D (nat,): max absolute per atom
+            stds_per_atom = np.max(np.abs(stds), axis=1)
+
+            if np.max(stds_per_atom) > call_threshold:
                 oracle_calls +=1
 
                 #get high uncertainty configs
@@ -621,13 +625,14 @@ def train_offline(config, train_set, test_set):
                 training_structures.append(conf)
 
                 #log
-                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds[indices]) +'\n')
+                file_log.write("Added environments: \n" + np.array2string(indices) + '\nUncertainties: \n' + np.array2string(stds_per_atom[indices]) +'\n')
                 sparse_indices.append(indices.tolist())
 
                 #should we optimize?
                 if oracle_calls > min_optimize and oracle_calls < max_optimize and oracle_calls%optimize_every == 0:
 
                     file_log.write(f"optimizing call #{oracle_calls}...")
+                    print('optimizing hyperparameters...')
                     #train hyperparameters
                     rollback = optimize_hyps(sgp.sparse_gp, **config["optimizer_options"])
 
@@ -687,6 +692,11 @@ def train_offline(config, train_set, test_set):
 
     return
 
+def model_from_json_dict(json_dict_file):
+    from flare.bffs.sgp.calculator import SGP_Calculator
+
+    flare_calc, _kernels = SGP_Calculator.from_file(json_dict_file)
+    return flare_calc, _kernels
 
 def main(config_file):
 

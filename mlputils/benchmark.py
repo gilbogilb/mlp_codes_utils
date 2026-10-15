@@ -48,8 +48,13 @@ def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0, output_fol
     and writes a file with the V-E(V) curve ('eos.dat')
     """
 
+
     bulk_properties = dict({})
     if E_iso_model is None:
+        #different potentials have different conventions (return or not the ab-initio isolated atom energy)
+        iso_atom = Atoms([symbol],[[0.,0.,0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0) #needed for lammps 
         E_iso_model = get_isolated_atom_energy(calc, symbol)
 
     volumes, energies = [], []
@@ -57,8 +62,8 @@ def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0, output_fol
     alats  = np.linspace(bounds[0] , bounds[1], 15)
 
     #compute energy over a range of latice constants around the putative minimum
-    for alat in alats:
-        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+    for a_lat in alats:
+        atoms      = fcc(size=(1,1,1), latticeconstant=a_lat, symbol=symbol, pbc=(1,1,1))
         atoms.calc = calc
         poten    = atoms.get_potential_energy()
         vol      = atoms.get_volume()
@@ -75,8 +80,8 @@ def eos_fcc_fit(symbol, calc, alat, E_iso_model=None, pmppercent=3.0, output_fol
     bounds            = [alat_precise - pmppercent*alat_precise/100., alat_precise+pmppercent*alat_precise/100.]
     alats             = np.linspace(bounds[0] , bounds[1], 20)
 
-    for alat in alats:
-        atoms      = fcc(size=(1,1,1), latticeconstant=alat, symbol=symbol, pbc=(1,1,1))
+    for a_lat in alats:
+        atoms      = fcc(size=(1,1,1), latticeconstant=a_lat, symbol=symbol, pbc=(1,1,1))
         atoms.calc = calc
         poten    = atoms.get_potential_energy()
         vol      = atoms.get_volume()
@@ -130,10 +135,10 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
     Returns a dictionary with the computed properties.
     """
 
-    surface_properties = dict({})
-    surfactories = dict({"fcc100": fcc100,
+    surface_properties = {}
+    surfactories = {"fcc100": fcc100,
                      "fcc110": fcc110,
-                     "fcc111": fcc111})
+                     "fcc111": fcc111}
     
     if E_iso_model is None:
         E_iso_model = get_isolated_atom_energy(calc, symbol)
@@ -171,7 +176,7 @@ def low_index_surfen(symbol, calc, lattice_constant, ecohesive=None, size=(1,1,8
         surface = np.linalg.norm(np.cross(cell[0],cell[1]))
         poten   = surf.get_potential_energy()
         surfen  = (poten - e_bulk*len(surf))/(2.*surface)*16.02
-        surface_properties[surfname]=dict({"gamma":float(surfen), "slab_energy": float(poten)})
+        surface_properties[surfname]={"gamma":float(surfen), "slab_energy": float(poten)}
 
     surface_properties['ecoh_for_surface_energy'] = e_bulk
     return surface_properties
@@ -328,6 +333,7 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
 
         e_at_err, f_err, s_err = 0., 0., 0.
         e_at_mav, f_mav, s_mav = 0., 0., 0.
+        s_count = 0
 
         this_test = {}
 
@@ -339,156 +345,148 @@ def compute_test_errors(calc, test_set_files, E_iso_ref, E_iso_model, use_norm=T
             suffix = sha256(str(test_set_file).encode()).hexdigest()[:12]
             output_name += '_' + suffix
         output_prefix = output_dir / ('_' + output_name + '_')
-        errors_file = open(str(output_prefix) + 'errors.dat', 'w')
-        parity_e = open(str(output_prefix) + 'e-parity.dat', 'w')
-        parity_f = open(str(output_prefix) + 'f-parity.dat', 'w')
-        parity_s = open(str(output_prefix) + 's-parity.dat', 'w')
 
-        errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
+        with open(str(output_prefix) + 'errors.dat', 'w') as errors_file, \
+             open(str(output_prefix) + 'e-parity.dat', 'w') as parity_e, \
+             open(str(output_prefix) + 'f-parity.dat', 'w') as parity_f, \
+             open(str(output_prefix) + 's-parity.dat', 'w') as parity_s:
 
-        s_count = 0
+            errors_file.write(f'# conf_id e_{err_method} e_mav f_{err_method} f_mav s_{err_method} s_mav\n')
 
-        # E_iso_model is passed in from the caller, computed on a fresh calculator
+            for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
 
-        for itconf, conf in enumerate(tqdm(test_set, desc=f"{tqdm_extra_string} - computing model predictions and errors...")):
-
-            #store dft values
-            e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso_ref
-            f_dft    = conf.get_forces()
-            #check stress
-            stress_available = True
-            try:
-                s_dft = conf.get_stress(voigt=False)
-            except Exception:
-                stress_available = False
-
-            #compute values with new calculator
-            conf.calc = calc
-
-            #store calc values
-            e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
-            f_model    = conf.get_forces()
-            # Check model stress
-            if stress_available:
+                #store dft values
+                e_at_dft = conf.get_potential_energy()/float(len(conf)) - E_iso_ref
+                f_dft    = conf.get_forces()
+                #check stress
+                stress_available = True
                 try:
-                    s_model = conf.get_stress(voigt=False)
+                    s_dft = conf.get_stress(voigt=False)
                 except Exception:
                     stress_available = False
 
-            if not stress_available:
-                print(f"Warning: stresses not available for frame {itconf} in {test_set_file}. Skipping stress errors.")
-            else:
-                s_count +=1
+                #compute values with new calculator
+                conf.calc = calc
 
-            #compute mavs (from reference data)
-            e_at_mav += np.abs(e_at_dft)
-            if use_norm:
-                f_dft_norms    = [np.linalg.norm(f) for f in f_dft]
-                f_model_norms  = [np.linalg.norm(f) for f in f_model]
-                f_mav         += np.average(f_dft_norms)
+                #store calc values
+                e_at_model = conf.get_potential_energy()/float(len(conf)) - E_iso_model
+                f_model    = conf.get_forces()
+                # Check model stress
                 if stress_available:
-                    s_dft_norm    = np.linalg.norm(s_dft)
-                    s_model_norm  = np.linalg.norm(s_model)
-                    s_mav        += s_dft_norm
-            else: #components-wise
-                f_mav += np.average( np.ravel( np.abs(f_dft )))
-                if stress_available:
-                    s_mav += np.average( np.ravel( np.abs(s_dft )))
+                    try:
+                        s_model = conf.get_stress(voigt=False)
+                    except Exception:
+                        stress_available = False
 
-            #compute error
-            de = (e_at_dft-e_at_model)
-            if err_method=='mae':
-                de = np.abs(de)
-            elif err_method=='rmse':
-                de = de**2.
-            e_at_err += de
+                if not stress_available:
+                    print(f"Warning: stresses not available for frame {itconf} in {test_set_file}. Skipping stress errors.")
+                else:
+                    s_count +=1
 
-            if use_norm:
-                f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
+                #compute mavs (from reference data)
+                e_at_mav += np.abs(e_at_dft)
+                if use_norm:
+                    f_dft_norms    = [np.linalg.norm(f) for f in f_dft]
+                    f_model_norms  = [np.linalg.norm(f) for f in f_model]
+                    f_mav         += np.average(f_dft_norms)
+                    if stress_available:
+                        s_dft_norm    = np.linalg.norm(s_dft)
+                        s_model_norm  = np.linalg.norm(s_model)
+                        s_mav        += s_dft_norm
+                else: #components-wise
+                    f_mav += np.average( np.ravel( np.abs(f_dft )))
+                    if stress_available:
+                        s_mav += np.average( np.ravel( np.abs(s_dft )))
 
-                if err_method == 'mae':
-                    pass
-                elif err_method == 'rmse':
-                    f_dist_norms = [ forc**2. for forc in f_dist_norms]
+                #compute error
+                de = (e_at_dft-e_at_model)
+                if err_method=='mae':
+                    de = np.abs(de)
+                elif err_method=='rmse':
+                    de = de**2.
+                e_at_err += de
 
-                f_err += np.average(f_dist_norms) #2-norm
-
-                if stress_available:
-                    s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
+                if use_norm:
+                    f_dist_norms = [np.linalg.norm(f_d-f_f) for f_d, f_f in zip(f_dft, f_model)]
 
                     if err_method == 'mae':
                         pass
                     elif err_method == 'rmse':
-                        s_dist_norm = s_dist_norm **2.
-                    
-                    s_err += s_dist_norm
-            
-            else: #compontents-wise
-                f_dist = np.ravel( np.abs(f_dft - f_model) )
+                        f_dist_norms = [ forc**2. for forc in f_dist_norms]
 
-                if err_method == 'mae':
-                    pass
-                elif err_method == 'rmse':
-                    f_dist = [forc**2 for forc in f_dist]
+                    f_err += np.average(f_dist_norms) #2-norm
 
-                f_err += np.average( f_dist )
+                    if stress_available:
+                        s_dist_norm  = np.linalg.norm( s_dft-s_model ) #Frobenius norm
 
-                if stress_available:
-                    s_dist = np.ravel( np.abs(s_dft - s_model) )
+                        if err_method == 'mae':
+                            pass
+                        elif err_method == 'rmse':
+                            s_dist_norm = s_dist_norm **2.
+                        
+                        s_err += s_dist_norm
+                
+                else: #compontents-wise
+                    f_dist = np.ravel( np.abs(f_dft - f_model) )
 
                     if err_method == 'mae':
                         pass
                     elif err_method == 'rmse':
-                        s_dist = s_dist **2.                    
+                        f_dist = [forc**2 for forc in f_dist]
 
-                    s_err += np.average( s_dist )
+                    f_err += np.average( f_dist )
 
-            #write to output
-            if use_norm:
-                f_dft_print  = np.average(f_dft_norms)
-                f_dist_print = np.average(f_dist_norms)
-                if stress_available:
-                    s_dft_print  = s_dft_norm
-                    s_dist_print = s_dist_norm
-            else:
-                f_dft_print  = np.average( np.ravel(f_dft) )
-                f_dist_print = np.average( np.ravel(f_dist) )
-                if stress_available:
-                    s_dft_print  = np.average( np.ravel(s_dft) )
-                    s_dist_print = np.average( np.ravel(s_dist) )
+                    if stress_available:
+                        s_dist = np.ravel( np.abs(s_dft - s_model) )
 
-            errors_file.write(
-                f"{itconf} "
-                f"{np.abs(e_at_dft - e_at_model):.3g} "
-                f"{np.abs(e_at_dft):.3g} "
-                f"{f_dist_print:.3g} "
-                f"{f_dft_print:.3g} "
-            )
-            if stress_available:
+                        if err_method == 'mae':
+                            pass
+                        elif err_method == 'rmse':
+                            s_dist = s_dist **2.                    
+
+                        s_err += np.average( s_dist )
+
+                #write to output
+                if use_norm:
+                    f_dft_print  = np.average(f_dft_norms)
+                    f_dist_print = np.average(f_dist_norms)
+                    if stress_available:
+                        s_dft_print  = s_dft_norm
+                        s_dist_print = s_dist_norm
+                else:
+                    f_dft_print  = np.average( np.ravel(f_dft) )
+                    f_dist_print = np.average( np.ravel(f_dist) )
+                    if stress_available:
+                        s_dft_print  = np.average( np.ravel(s_dft) )
+                        s_dist_print = np.average( np.ravel(s_dist) )
+
                 errors_file.write(
-                    f"{s_dist_print:.3g} "
-                    f"{s_dft_print:.3g}"
+                    f"{itconf} "
+                    f"{np.abs(e_at_dft - e_at_model):.3g} "
+                    f"{np.abs(e_at_dft):.3g} "
+                    f"{f_dist_print:.3g} "
+                    f"{f_dft_print:.3g} "
                 )
-            errors_file.write("\n")
-
-            parity_e.write(f"{e_at_dft} {e_at_model}\n")
-
-            if use_norm:
-                for fd, fm in zip(f_dft_norms, f_model_norms):
-                    parity_f.write(f"{fd} {fm}\n")
                 if stress_available:
-                    parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
-            else:
-                for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
-                    parity_f.write(f"{fd} {fm}\n")
-                if stress_available:
-                    for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
-                        parity_s.write(f"{sd} {sm}\n")
+                    errors_file.write(
+                        f"{s_dist_print:.3g} "
+                        f"{s_dft_print:.3g}"
+                    )
+                errors_file.write("\n")
 
-        errors_file.close()
-        parity_e.close()
-        parity_f.close()
-        parity_s.close()
+                parity_e.write(f"{e_at_dft} {e_at_model}\n")
+
+                if use_norm:
+                    for fd, fm in zip(f_dft_norms, f_model_norms):
+                        parity_f.write(f"{fd} {fm}\n")
+                    if stress_available:
+                        parity_s.write(f"{s_dft_norm} {s_model_norm}\n")
+                else:
+                    for fd, fm in zip(np.ravel(f_dft), np.ravel(f_model)):
+                        parity_f.write(f"{fd} {fm}\n")
+                    if stress_available:
+                        for sd, sm in zip(np.ravel(s_dft), np.ravel(s_model)):
+                            parity_s.write(f"{sd} {sm}\n")
 
         #normalize
         nconf = float(len(test_set))
@@ -741,7 +739,7 @@ def make_energy_differences_matrix(calc, e_iso_ref, dataset, E_iso_model=None):
     return diff_error, ref_diff, model_diff
 
 
-def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617333262e-5):
+def energy_levels_crossings(file, calc, symbol, alat, cohesive_energy, E_iso=None, fictitious_temperature=None, k_B = 8.617333262e-5, use_excess_energy=True):
     """
     Compare energy ordering of isomers between reference data and calculator.
 
@@ -749,36 +747,86 @@ def energy_levels_crossings(file, calc, fictitious_temperature=None, k_B = 8.617
     calculator energy is computed.  The number of "crossings" (inversions)
     between the reference ordering and the calculator ordering is returned.
 
+    By default, unnormalized excess energies are used:
+        excess_energy = (E_total - N * cohesive_energy) / N^(2/3)
+    where the DFT reference uses the provided cohesive_energy and the
+    calculator's cohesive energy is computed by relaxing a bulk FCC crystal.
+    This removes the trivial N-dependent energy offset and compares
+    structural energy differences. Set use_excess_energy=False to compare
+    raw total energies instead.
+
     Parameters
     ----------
     file : str
         Path to a file containing isomers (readable by ase.io.read).
     calc : ASE calculator
         Calculator used to compute the energy of each isomer.
+    symbol : str
+        Chemical symbol (e.g. 'Cu'). Used to compute the calculator's
+        cohesive energy from a relaxed bulk FCC crystal.
+    alat : float
+        Approximate lattice constant in Angstrom. Used to build the
+        bulk FCC structure for the calculator's cohesive energy.
+    cohesive_energy : float
+        DFT cohesive energy per atom (in eV) of the bulk phase.
+    E_iso : float or None
+        if your dft/reference data has an isolated atom energy term, pass this value as E_iso
+        to have it removed from the total energy when computing excess energy or total energies.
     fictitious_temperature : float or None
         Optional fictitious temperature for Boltzmann-weighted
         comparisons via KL divergence (requires pysnow).
     k_B : float, default to Boltzmann constant in eV/K
         boltzmann constant to compute the boltzmann distribution. It is defaulted to
         eV/K but can be modified according to your needs.
-        
+    use_excess_energy : bool, default True
+        If True, compute excess energies (E - N*cohesive_energy) for both
+        reference and calculator before comparing orderings.
+
     Returns
     -------
+    np.array
+        reference energies (or excess energies if use_excess_energy=True)
+    np.array
+        calculator energies (or excess energies if use_excess_energy=True)
     int
         Number of inversions (line crossings) between the two orderings.
     float or None
         KL divergence between Boltzmann-weighted distributions at
         temperature T, or None if fictitious_temperature is not given.
     """
+    if use_excess_energy:
+        iso_atom = Atoms([symbol], [[0., 0., 0.]], pbc=False)
+        iso_atom.calc = calc
+        iso_atom.center(vacuum=10.0)
+        e_iso_model = iso_atom.get_potential_energy()
+
+        bulkfcc = fcc(symbol, latticeconstant=alat, pbc=(1, 1, 1))
+        bulkfcc.calc = calc
+        dyn = LBFGS(bulkfcc, logfile="bfgs.log")
+        dyn.run(fmax=1e-5)
+        ecoh_model = bulkfcc.get_potential_energy() / len(bulkfcc) - e_iso_model
+
     isomers = read(file, index=':')
 
     ref_energies = []
     calc_energies = []
 
     for atoms in isomers:
-        ref_energies.append(atoms.get_potential_energy())
+        ref_e = atoms.get_potential_energy()
+        if E_iso is not None:
+            ref_e -= E_iso*len(atoms)
+
         atoms.calc = calc
-        calc_energies.append(atoms.get_potential_energy())
+        calc_e = atoms.get_potential_energy()
+
+        if use_excess_energy:
+            n = len(atoms)
+            surf_term = n**(2./3.)
+            ref_e = ( ref_e - n * cohesive_energy ) / surf_term
+            calc_e = ( calc_e - n * ecoh_model ) / surf_term
+
+        ref_energies.append(ref_e)
+        calc_energies.append(calc_e)
 
     pairs = list(zip(ref_energies, calc_energies))
     pairs.sort(key=lambda x: x[0])

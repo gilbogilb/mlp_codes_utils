@@ -1,38 +1,64 @@
 # mlputils
-A small python package with utilities to train and test machine learning potentials (at the moment, with flare and mace)
-and to generate quantum-espresso inputs for dft reference values.
+
+Tools for the full lifecycle of machine learning interatomic potentials: generating DFT reference data, creating train/test datasets, training potentials via offline active learning, and benchmarking predictions against DFT. Targets FCC metals (Cu, Au, Al) and their nanoparticles.
+
 ## Installation
-you can install mlputils with `pip` after cloning this repo.
-
-## Output folders
-
-Offline training and benchmarking accept an optional top-level YAML entry:
-
-```yaml
-output_folder: ./results
-```
-
-The default is `./`. Relative paths are resolved from the working directory where
-commands are run; absolute paths and `~` are supported. Missing directories are
-created automatically. Input dataset, model, phonon, and pseudopotential paths
-keep their existing interpretation.
-
-Offline training places generated train/test sets, logs, learning curves, parity
-data, JSON models, added structures, and FLARE/LAMMPS mapping files in this folder.
-Benchmarking places its YAML report, EOS data, optimizer logs, parity/error files,
-phonon exports, and cluster excess-energy data there.
-
-For DFT reference input generation, add the same entry to `parameters.yml` or the
-parameter dictionary passed to `input_*` functions. The CLI now reads one explicitly specified YAML file for all generated references. Generated `.pwi` files and phonon setup YAML go to the
-configured folder. The convergence input makers accept an `output_folder` keyword
-argument, defaulting to `./`. Existing DFT parsing output conventions are unchanged.
-
-## DFT reference input generation
-
-Run, for example, from `workflows_examples`:
 
 ```bash
-python -m mlputils.reference_dft_maker input Cu parameters_relax.yaml
+pip install -e .
+```
+
+Optional dependencies are split by functionality:
+
+| Extra | Package | Needed for |
+|-------|---------|------------|
+| `flare` | `mir-flare` | FLARE training |
+| `mace` | `mace` | MACE models |
+| `phonopy` | `phonopy` | Phonon calculations |
+| `snow` | `snow` | GCN/CNAP sorting, KL divergence |
+| `all` | all above | Everything |
+
+```bash
+pip install -e ".[flare]"     # FLARE only
+pip install -e ".[mace]"      # MACE only
+pip install -e ".[all]"       # everything
+```
+
+Additional optional packages (not pip-installable via extras):
+- `tqdm` — progress bars (graceful fallback if missing)
+- `lammps` Python bindings — LAMMPS-based FLARE calculator
+
+## Module map
+
+```
+reference_dft_maker.py  →  generates QE inputs + parses DFT outputs
+        ↓ (reference data)
+    makesets.py         →  splits configs into train/test sets
+        ↓ (datasets)
+offline_training.py     →  trains FLARE Sparse GP potentials
+        ↓ (trained model)
+    benchmark.py        →  validates MLP against DFT properties
+```
+
+All modules are runnable from the command line:
+
+```bash
+python -m mlputils.reference_dft_maker input|parse|plot <symbol> [args]
+python -m mlputils.makesets <config.yaml>
+python -m mlputils.offline_training <config.yaml>
+python -m mlputils.benchmark <config.yaml>
+```
+
+## Quick start
+
+### 1. Generate DFT reference data
+
+Create `parameters.yml` and `parameters_relax.yml` in your working directory (see `reference_dft_maker.py` docstrings for keys), then:
+
+```bash
+python -m mlputils.reference_dft_maker input chemical_symbol input_dft_parameters.yaml
+# run pw.x on the generated .pwi files, then:
+python -m mlputils.reference_dft_maker parse chemical_symbol isolated_atom_energy
 ```
 
 The parameter file supplies `vacuum`, `pseudo_dir`, and `output_folder`.
