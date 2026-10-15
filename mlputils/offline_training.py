@@ -172,12 +172,14 @@ def optimize_hyps(gp_model,
     """
     Finds optimal hyperparameters for the gp_model, using its current hyps as starting guess.
     If the found hyps are outside the defined minhyps,maxhyps, it will return True - signalling a failure
-    otherwise it will set new hyps to the model
+    otherwise it will set new hyps to the model. Rollback preserves training
+    structures and sparse environments, and rebuilds matrices at the restored hyps.
+    Bounds retain the existing strict minhyps < abs(hyps) < maxhyps convention.
     """
     rollback = False
     
-    initial_guess = gp_model.hyperparameters
-    old_hyps      = np.array(initial_guess) # save in case of rollback
+    old_hyps = np.array(gp_model.hyperparameters, copy=True)
+    initial_guess = old_hyps.copy()
     if loss_function_config["name"] == "negative_likelihood":
         loss_function = compute_negative_likelihood_grad_stable
         arguments = (gp_model, True)
@@ -204,9 +206,10 @@ def optimize_hyps(gp_model,
     #print(optimization_result)
     # Assign likelihood gradient, if it didn't explode
     #print(f'old hyps: {old_hyps}\n optimized hyps: {optimization_result.x}')
-    if np.all(np.abs(optimization_result.x) < maxhyps) and np.all(np.abs(optimization_result.x) > minhyps) :
+    candidate = np.abs(optimization_result.x)
+    if np.all(np.isfinite(candidate)) and np.all(candidate < maxhyps) and np.all(candidate > minhyps):
         # Optimization succedeed, so set new hyps
-        gp_model.set_hyperparameters(np.abs(optimization_result.x))
+        gp_model.set_hyperparameters(candidate)
         gp_model.update_matrices_QR()
         if loss_function_config["name"] == "negative_likelihood":
             gp_model.likelihood_gradient = -optimization_result.jac
@@ -214,6 +217,13 @@ def optimize_hyps(gp_model,
     else:
         # Optimization failed. Flag this, and reset old hyps.
         gp_model.set_hyperparameters(old_hyps)
+        gp_model.update_matrices_QR()
+        if loss_function_config["name"] == "negative_likelihood":
+            neglik, gradient = compute_negative_likelihood_grad_stable(
+                old_hyps, gp_model, precomputed=False
+            )
+            gp_model.likelihood_gradient = -gradient
+            gp_model.log_marginal_likelihood = -neglik
         #file_log.write("Optimization resulted in exploded or collapsed hyps!\n")
         #file_log.write(f"Would have been : {np.array2string(np.abs(optimization_result.x))}"+'\n')
         rollback = True
@@ -484,8 +494,13 @@ def train_offline(config, train_set, test_set):
 
     #initialize variables and objects
     #add write to json
-    #implement style=accept in optimization
 
+
+    rollback_mode = config.get("when_rollback", "accept")
+    if rollback_mode != "accept":
+        raise ValueError(
+            "when_rollback must be 'accept'; discarding environments is not implemented"
+        )
 
     #use function from flare package
     #set stress_training in the config file, eventually
@@ -616,17 +631,16 @@ def train_offline(config, train_set, test_set):
                     #train hyperparameters
                     rollback = optimize_hyps(sgp.sparse_gp, **config["optimizer_options"])
 
-                    if rollback: #optimization failed
-                        file_log.write('optimization failed. Currently only accept style rollback is implemented.\n')
-                        if config["when_rollback"] == "discard":
-                            #create an sgp with all configs up until this one
-                            print('discard style rollback is not yet implemented')
-                            pass
-                        pass
+                    if rollback:
+                        file_log.write(
+                            'optimization rejected: restored previous hyperparameters; '
+                            'kept the newly added environments (accept mode).\n'
+                        )
                     else:
-                        file_hyps.write(f"{step}\t{' '.join(map(str, sgp.sparse_gp.hyperparameters))}\n")
-                        file_hyps.flush()
-                        #all ok
+                        file_log.write('optimization accepted.\n')
+                    # Record the actual parameters in use, including restored values.
+                    file_hyps.write(f"{step}\t{' '.join(map(str, sgp.sparse_gp.hyperparameters))}\n")
+                    file_hyps.flush()
 
                 else:
                     pass

@@ -40,3 +40,16 @@ Use `kpts: gamma` for Gamma-only calculations, or a positive integer for the
 conventional-cell Monkhorst-Pack mesh (rescaled for slabs and phonon supercells).
 Use `koffset: null` or `0` for an unshifted mesh, `1` for shifts in all directions,
 or a three-element list such as `[1, 0, 1]`. Gamma inputs ignore mesh offsets.
+
+## Offline optimization rollback
+
+```yaml
+when_rollback: accept
+```
+
+`accept` is the default. If optimized hyperparameter magnitudes are nonfinite or
+fall outside the existing strict `minhyps < abs(hyps) < maxhyps` limits, the learner
+restores the parameters in use immediately before that optimization. Newly added
+training structures and sparse environments stay in the GP. Matrices are rebuilt
+using the restored parameters, and logs record the rollback and actual parameters
+in use. `discard` is not implemented and is rejected before training begins.

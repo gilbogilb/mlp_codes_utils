@@ -9,3 +9,4 @@ build/
 .vscode/
 !tests/test_reference_inputs.py
 workflows_examples/output/
+!tests/test_accept_mode.py

@@ -11,7 +11,7 @@ isolated_energies_mapped:
   "0" :  -1661.4439420703893
 
 seed : 123  # Seed for rearranging singular datasets and choosing train configs
-when_rollback : "discard" # or accept. Decides what happens when hyps optim fail. If "discard", both training set and hyps are reset to before the frame. If "accept" , only reset GPs.
+when_rollback: "accept" # Restore rejected hyperparameters while retaining added environments.
 nr_initial_envs : 5 # The number of environments chosen randomly from the first configuration to bootstrap the offline learning
 
 optimize_every : 1 # Every how many oracle calls optimization of hyps is performed - e.g. every 2,3 etc...
